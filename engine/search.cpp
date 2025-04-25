@@ -14,8 +14,6 @@ std::pair<Move, Value> search(Board &board, int time, int side) {
     pzstd::vector<Move> moves;
     board.legal_moves(moves);
 
-    // TODO: order moves
-
     for (int i = 0; i < moves.size(); i++) {
         games = 0;
         Move &move = moves[i];
@@ -32,6 +30,15 @@ std::pair<Move, Value> search(Board &board, int time, int side) {
     }
 
     return {best_move, best_score};
+}
+
+void select(Board &board) {
+    pzstd::vector<Move> moves;
+    board.legal_moves(moves);
+
+    for (auto &move : moves) {
+        
+    }
 }
 
 double play(Board &board, int side) {
@@ -54,24 +61,10 @@ double play(Board &board, int side) {
     pzstd::vector<Move> moves;
     board.legal_moves(moves);
 
-    Value cumscore = 0;
-    int games_played = 0;
+    Move &move = moves[rand() % moves.size()];
+    board.make_move(move);
+    Value score = -play(board, -side);
+    board.unmake_move();
 
-    for (int i = 0; i < 2; i++) {
-        Move &move = moves[rand() % moves.size()];
-        board.make_move(move);
-        cumscore += -play(board, -side);
-        board.unmake_move();
-        games_played++;
-        if (games - last_check > 100) {
-            if (games > limit) break;
-            if ((clock() - start) / CLOCKS_PER_MS > max_time) {
-                break;
-            }
-        }
-    }
-
-    cumscore /= games_played;
-
-    return cumscore;
+    return score;
 }
