@@ -1,6 +1,6 @@
 #include "search.hpp"
 
-int games = 0, limit = 10000, last_check = 0;
+int games = 0, limit = 50000, last_check = 0;
 clock_t start;
 int max_time = 0;
 
@@ -21,10 +21,10 @@ int to_cp_eval(int nsims, int val) {
 
 double score_move(Move &move, Board &board) {
     if ((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & square_bits(move.dst())) {
-        return 10; // Capture
+        return 1.5; // Capture
     }
     if (move.type() == PROMOTION) {
-        return 8;
+        return 1.2;
     }
     return 1;
 }
@@ -96,9 +96,14 @@ void select(MCTSNode *node, Board &board) {
         if (node->children.size() > 0) {
             MCTSNode *child = node->children[rng() % node->children.size()];
             board.make_move(child->move);
-            double score = simulate(board, board.side == WHITE ? 1 : -1);
-            backpropagate(child, score);
+            double score = -simulate(board, board.side == WHITE ? 1 : -1);
             board.unmake_move();
+            backpropagate(child, score);
+            games++;
+        } else {
+            // If the node has no children, we are at a terminal node
+            double score = -simulate(board, board.side == WHITE ? 1 : -1);
+            backpropagate(node, score);
             games++;
         }
     } else {
@@ -125,8 +130,6 @@ void select(MCTSNode *node, Board &board) {
 // Expands the node by adding a new child
 void expand(MCTSNode *node, Board &board) {
     if (is_game_over(board)) {
-        node->nsims++;
-        node->val = -VALUE_MAX;
         return;
     }
 
@@ -158,11 +161,11 @@ void expand(MCTSNode *node, Board &board) {
 double simulate(Board &board, int side, int depth) {
     if (!(board.piece_boards[KING] & board.piece_boards[OCC(BLACK)])) {
 		// If black has no king, this is mate for white
-        return -1 * side;
+        return 1 * side;
     }
 	if (!(board.piece_boards[KING] & board.piece_boards[OCC(WHITE)])) {
 		// Likewise, if white has no king, this is mate for black
-        return 1 * side;
+        return -1 * side;
 	}
 
     if (board.threefold() || board.halfmove >= 100) {
@@ -170,7 +173,7 @@ double simulate(Board &board, int side, int depth) {
     }
 
     if (depth >= 60 && rng() % 10 == 0) {
-        return -eval(board) * side;
+        return eval(board) * side;
     }
 
     pzstd::vector<Move> moves;
