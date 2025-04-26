@@ -10,12 +10,12 @@
 
 int main(int argc, char *argv[]) {
 	if (argc == 2 && std::string(argv[1]) == "bench") {
-		// Board board = Board();
-		// uint64_t start = clock();
-		// search(board, 10, true);
-		// uint64_t end = clock();
-		// std::cout << nodes << " nodes " << (nodes / ((double)(end - start) / CLOCKS_PER_SEC)) << " nps" << std::endl;
-		// return 0;
+		Board board = Board();
+		uint64_t start = clock();
+		search(board, 1000, 1);
+		uint64_t end = clock();
+		std::cout << 1 << " nodes " << (ngames() / ((double)(end - start) / CLOCKS_PER_SEC)) << " nps" << std::endl;
+		return 0;
 	}
 	bool online = argc == 2 && std::string(argv[1]) == "--online";
 	std::cout << "MonteCraplo " << VERSION << " developed by kevlu8 and wdotmathree" << std::endl;

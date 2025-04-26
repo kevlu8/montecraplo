@@ -3,7 +3,8 @@
 #include "bitboard.hpp"
 
 struct MCTSNode {
-    int val, nsims;
+    double val;
+    int nsims;
     Move move;
     MCTSNode *parent;
     pzstd::vector<MCTSNode *> children;

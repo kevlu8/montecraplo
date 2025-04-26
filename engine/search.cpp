@@ -1,8 +1,10 @@
 #include "search.hpp"
 
-int games = 0, limit = 200000, last_check = 0;
+int games = 0, limit = 10000, last_check = 0;
 clock_t start;
 int max_time = 0;
+
+std::mt19937 rng(1); // Fixed seed for debug
 
 void clear_nodes(MCTSNode *root) {
     for (auto &child : root->children) {
@@ -19,12 +21,16 @@ int to_cp_eval(int nsims, int val) {
 
 double score_move(Move &move, Board &board) {
     if ((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & square_bits(move.dst())) {
-        return 10;
+        return 10; // Capture
     }
     if (move.type() == PROMOTION) {
         return 8;
     }
     return 1;
+}
+
+int ngames() {
+    return games;
 }
 
 std::pair<Move, Value> search(Board &board, int time, int side) {
@@ -45,11 +51,22 @@ std::pair<Move, Value> search(Board &board, int time, int side) {
                 break;
             }
             last_check = games;
-            if (games%10000==0) std::cout << "info depth " << games/10000 << " time " << (clock() - start) / CLOCKS_PER_MS << " nodes " << games << " score cp " << -to_cp_eval(root->nsims, root->val) << std::endl;
+            if (games%3000==0) {
+                std::cout << "info depth " << games/10000+1 << " time " << (clock() - start) / CLOCKS_PER_MS << " nodes " << games << " score cp " << -to_cp_eval(root->nsims, root->val) << " nps " << (int)(games / ((double)(clock() - start) / CLOCKS_PER_SEC));
+                std::cout << " pv ";
+                Move best_move;
+                int most_visited = 0;
+                for (auto &child : root->children) {
+                    if (child->nsims > most_visited) {
+                        most_visited = child->nsims;
+                        best_move = child->move;
+                    }
+                }
+                std::cout << best_move.to_string() << std::endl;
+            }
         }
         select(root, board);
     }
-    std::cout << "info depth " << games/10000 << " time " << (clock() - start) / CLOCKS_PER_MS << " nodes " << games << " score cp " << -to_cp_eval(root->nsims, root->val) << std::endl;
 
     Move best_move;
     Value best_val = -VALUE_MAX;
@@ -69,15 +86,17 @@ std::pair<Move, Value> search(Board &board, int time, int side) {
 // Phase 1: Selection
 // Selects a node to explore based on UCB1
 void select(MCTSNode *node, Board &board) {
+    // std::cout << "selecting node " << node->move.to_string() << " games " << games;
+    // std::cout << " children " << node->children.size() << " nsims " << node->nsims << " val " << node->val << std::endl;
     if (node->move != NullMove) board.make_move(node->move);
     if (node->children.size() == 0) {
         // If the node has no children, expand it
         expand(node, board);
         // Then, simulate a child
         if (node->children.size() > 0) {
-            MCTSNode *child = node->children[rand() % node->children.size()];
+            MCTSNode *child = node->children[rng() % node->children.size()];
             board.make_move(child->move);
-            int score = simulate(board, board.side == WHITE ? 1 : -1);
+            double score = simulate(board, board.side == WHITE ? 1 : -1);
             backpropagate(child, score);
             board.unmake_move();
             games++;
@@ -105,6 +124,12 @@ void select(MCTSNode *node, Board &board) {
 // Phase 2: Expansion
 // Expands the node by adding a new child
 void expand(MCTSNode *node, Board &board) {
+    if (is_game_over(board)) {
+        node->nsims++;
+        node->val = -VALUE_MAX;
+        return;
+    }
+
     pzstd::vector<Move> moves;
     board.legal_moves(moves);
 
@@ -130,7 +155,7 @@ void expand(MCTSNode *node, Board &board) {
 // Phase 3: Simulation
 // Simulates a random game from the current node
 // Returns the score of the game, where 1 is a win for the POV and -1 is a loss
-int simulate(Board &board, int side, int depth) {
+double simulate(Board &board, int side, int depth) {
     if (!(board.piece_boards[KING] & board.piece_boards[OCC(BLACK)])) {
 		// If black has no king, this is mate for white
         return -1 * side;
@@ -140,12 +165,12 @@ int simulate(Board &board, int side, int depth) {
         return 1 * side;
 	}
 
-    if (depth >= 60 && rand() % 10 == 0) {
-        return 0; // Randomly end the game after 60 moves
-    }
-
     if (board.threefold() || board.halfmove >= 100) {
         return 0;
+    }
+
+    if (depth >= 60 && rng() % 10 == 0) {
+        return -eval(board) * side;
     }
 
     pzstd::vector<Move> moves;
@@ -154,7 +179,7 @@ int simulate(Board &board, int side, int depth) {
     if (moves.size() == 0)
         return 0; // This should never happen, but just in case
 
-    Move &move = moves[rand() % moves.size()];
+    Move &move = moves[rng() % moves.size()];
     board.make_move(move);
     Value score = -simulate(board, -side, depth + 1);
     board.unmake_move();
