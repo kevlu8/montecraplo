@@ -18,6 +18,8 @@
 
 #define VERSION "v20250425T12"
 
+#define VALUE_HEAD "eval.bin"
+
 typedef uint64_t Bitboard;
 
 constexpr bool WHITE = false;
