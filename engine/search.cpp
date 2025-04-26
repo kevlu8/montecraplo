@@ -1,20 +1,30 @@
 #include "search.hpp"
 
-int games = 0, limit = 500000, last_check = 0;
+int games = 0, limit = 200000, last_check = 0;
 clock_t start;
 int max_time = 0;
 
-void clear_nodes(MCTSNode *node) {
-    for (auto &child : node->children) {
+void clear_nodes(MCTSNode *root) {
+    for (auto &child : root->children) {
         clear_nodes(child);
         delete child;
     }
-    node->children.clear();
+    root->children.clear();
 }
 
 int to_cp_eval(int nsims, int val) {
     if (nsims == 0) return 0;
     return ((double)val / nsims) * 10000; // +100 = definite win, -100 = definite loss
+}
+
+double score_move(Move &move, Board &board) {
+    if ((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & square_bits(move.dst())) {
+        return 10;
+    }
+    if (move.type() == PROMOTION) {
+        return 8;
+    }
+    return 1;
 }
 
 std::pair<Move, Value> search(Board &board, int time, int side) {
@@ -63,7 +73,7 @@ void select(MCTSNode *node, Board &board) {
     if (node->children.size() == 0) {
         // If the node has no children, expand it
         expand(node, board);
-        // Then, simulate the first child
+        // Then, simulate a child
         if (node->children.size() > 0) {
             MCTSNode *child = node->children[rand() % node->children.size()];
             board.make_move(child->move);
@@ -98,11 +108,21 @@ void expand(MCTSNode *node, Board &board) {
     pzstd::vector<Move> moves;
     board.legal_moves(moves);
 
+    double tot_score = 0;
+    pzstd::vector<double> scores;
+    for (int i = 0; i < moves.size(); i++) {
+        Move &move = moves[i];
+        double score = score_move(move, board);
+        tot_score += score;
+        scores.push_back(score);
+    }
+
     for (int i = 0; i < moves.size(); i++) {
         Move &move = moves[i];
         MCTSNode *child = new MCTSNode();
         child->move = move;
         child->parent = node;
+        child->prior = scores[i] / tot_score;
         node->children.push_back(child);
     }
 }
@@ -120,7 +140,11 @@ int simulate(Board &board, int side, int depth) {
         return 1 * side;
 	}
 
-    if (board.threefold() || board.halfmove >= 100 || depth >= 300) {
+    if (depth >= 60 && rand() % 10 == 0) {
+        return 0; // Randomly end the game after 60 moves
+    }
+
+    if (board.threefold() || board.halfmove >= 100) {
         return 0;
     }
 
