@@ -1,6 +1,6 @@
 #pragma once
 
-#define PZSTL_MAX_SIZE 256
+#define PZSTL_MAX_SIZE 128
 
 namespace pzstd {
 	template <typename T>

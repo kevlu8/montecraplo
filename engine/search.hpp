@@ -5,10 +5,12 @@
 #include "bitboard.hpp"
 #include "move.hpp"
 #include "movegen.hpp"
+#include "node.hpp"
 
-// Plays out a game from the current board position
-// Returns the evaluation on a scale from -100 to 100
-double play(Board &board, int side);
+void select(MCTSNode *node, Board &board);
+void expand(MCTSNode *node, Board &board);
+int simulate(Board &board, int side, int depth=0);
+void backpropagate(MCTSNode *node, int score);
 
 std::pair<Move, Value> search(Board &board, int time=1e9, int side=1);
 
