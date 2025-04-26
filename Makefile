@@ -5,7 +5,7 @@ CXXFLAGS := -std=c++17 -march=native
 RELEASEFLAGS = -O3
 DEBUGFLAGS = -g -fsanitize=address,undefined
 
-SRCS := $(wildcard engine/*.cpp)
+SRCS := $(wildcard engine/*.cpp engine/nn/*.cpp)
 HDRS := $(wildcard engine/*.hpp engine/pzstl/*.hpp)
 OBJS := $(SRCS:.cpp=.o)
 

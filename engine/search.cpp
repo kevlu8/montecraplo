@@ -102,7 +102,7 @@ void select(MCTSNode *node, Board &board) {
             games++;
         } else {
             // If the node has no children, we are at a terminal node
-            double score = -simulate(board, board.side == WHITE ? 1 : -1);
+            double score = simulate(board, board.side == WHITE ? 1 : -1);
             backpropagate(node, score);
             games++;
         }
