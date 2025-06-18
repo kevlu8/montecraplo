@@ -1,4 +1,5 @@
 #include "search.hpp"
+#include <algorithm>
 
 int games = 0, limit = 50000, last_check = 0;
 clock_t start;
@@ -96,13 +97,13 @@ void select(MCTSNode *node, Board &board) {
         if (node->children.size() > 0) {
             MCTSNode *child = node->children[rng() % node->children.size()];
             board.make_move(child->move);
-            double score = -simulate(board, board.side == WHITE ? 1 : -1);
+            double score = -simulate(board);
             board.unmake_move();
             backpropagate(child, score);
             games++;
         } else {
             // If the node has no children, we are at a terminal node
-            double score = -simulate(board, board.side == WHITE ? 1 : -1);
+            double score = -simulate(board);
             backpropagate(node, score);
             games++;
         }
@@ -157,45 +158,53 @@ void expand(MCTSNode *node, Board &board) {
 
 // Phase 3: Simulation
 // Simulates a random game from the current node
-// Returns the score of the game, where 1 is a win for the POV and -1 is a loss
-double simulate(Board &board, int side, int depth) {
+// Returns the score of the game, where 1 is a win for the side to move and -1 is a loss
+double simulate(Board &board, int depth) {
+    // Check for king capture (should not happen in legal play, but safety check)
     if (!(board.piece_boards[KING] & board.piece_boards[OCC(BLACK)])) {
-		// If black has no king, this is mate for white
-        return 1 * side;
+        // Black has no king, white wins
+        return board.side == WHITE ? 1.0 : -1.0;
     }
-	if (!(board.piece_boards[KING] & board.piece_boards[OCC(WHITE)])) {
-		// Likewise, if white has no king, this is mate for black
-        return -1 * side;
-	}
+    if (!(board.piece_boards[KING] & board.piece_boards[OCC(WHITE)])) {
+        // White has no king, black wins  
+        return board.side == BLACK ? 1.0 : -1.0;
+    }
 
     if (board.threefold() || board.halfmove >= 100) {
-        return 0;
+        return 0.0; // Draw
     }
 
     if (depth >= 60 && rng() % 10 == 0) {
-        return eval(board) * side;
+        // Use evaluation function, normalize to [-1, 1] range
+        double eval_score = eval(board) / 1000.0; // Assuming eval returns centipawns
+        eval_score = std::max(-1.0, std::min(1.0, eval_score)); // Clamp to [-1, 1]
+        return board.side == WHITE ? eval_score : -eval_score;
     }
 
     pzstd::vector<Move> moves;
     board.legal_moves(moves);
 
-    if (moves.size() == 0)
-        return 0; // This should never happen, but just in case
+    if (moves.size() == 0) {
+        // No legal moves - either checkmate or stalemate
+        // This requires checking if the king is in check
+        // For now, assume stalemate (you should implement proper check detection)
+        return 0.0; // Stalemate
+    }
 
     Move &move = moves[rng() % moves.size()];
     board.make_move(move);
-    Value score = -simulate(board, -side, depth + 1);
+    double score = -simulate(board, depth + 1); // Negate for opponent's perspective
     board.unmake_move();
     return score;
 }
 
 // Phase 4: Backpropagation
 // This is done in the other functions, as we update the node's win count and simulation count
-void backpropagate(MCTSNode *node, int score) {
+void backpropagate(MCTSNode *node, double score) {
     while (node != nullptr) {
         node->val += score;
         node->nsims++;
-        score = -score;
+        score = -score; // Flip score for parent (different perspective)
         node = node->parent;
     }
 }
