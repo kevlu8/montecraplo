@@ -13,8 +13,10 @@ int ngames();
 
 void select(MCTSNode *node, Board &board);
 void expand(MCTSNode *node, Board &board);
-double simulate(Board &board, int side, int depth=0);
-void backpropagate(MCTSNode *node, int score);
+double simulate(Board &board, int depth=0);
+void backpropagate(MCTSNode *node, double score);
+
+void set_puct_constant(double c);
 
 std::pair<Move, Value> search(Board &board, int time=1e9, int side=1);
 

@@ -1,8 +1,10 @@
 #include "search.hpp"
+#include <algorithm>
 
 int games = 0, limit = 50000, last_check = 0;
 clock_t start;
 int max_time = 0;
+double c_puct = 1.414; // PUCT exploration constant
 
 std::mt19937 rng(1); // Fixed seed for debug
 
@@ -20,13 +22,28 @@ int to_cp_eval(int nsims, int val) {
 }
 
 double score_move(Move &move, Board &board) {
+    double score = 1.0; // Base score
+    
+    // Capture bonus
     if ((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & square_bits(move.dst())) {
-        return 1.5; // Capture
+        score += 2.0; // Significant bonus for captures
     }
+    
+    // Promotion bonus
     if (move.type() == PROMOTION) {
-        return 1.2;
+        score += 1.5;
     }
-    return 1;
+
+    // TODO: check bonus (but prob won't be implemented in favor of NN eval)
+    
+    // Central square bonus for non-captures
+    int dst_file = move.dst() % 8;
+    int dst_rank = move.dst() / 8;
+    if (dst_file >= 2 && dst_file <= 5 && dst_rank >= 2 && dst_rank <= 5) {
+        score += 0.3; // Small bonus for central squares
+    }
+    
+    return score;
 }
 
 int ngames() {
@@ -84,7 +101,7 @@ std::pair<Move, Value> search(Board &board, int time, int side) {
 }
 
 // Phase 1: Selection
-// Selects a node to explore based on UCB1
+// Selects a node to explore based on PUCT (Predictor + UCT)
 void select(MCTSNode *node, Board &board) {
     // std::cout << "selecting node " << node->move.to_string() << " games " << games;
     // std::cout << " children " << node->children.size() << " nsims " << node->nsims << " val " << node->val << std::endl;
@@ -96,25 +113,25 @@ void select(MCTSNode *node, Board &board) {
         if (node->children.size() > 0) {
             MCTSNode *child = node->children[rng() % node->children.size()];
             board.make_move(child->move);
-            double score = -simulate(board, board.side == WHITE ? 1 : -1);
+            double score = -simulate(board);
             board.unmake_move();
             backpropagate(child, score);
             games++;
         } else {
             // If the node has no children, we are at a terminal node
-            double score = -simulate(board, board.side == WHITE ? 1 : -1);
+            double score = -simulate(board);
             backpropagate(node, score);
             games++;
         }
     } else {
-        // Otherwise, select the child with the highest UCB1 value
-        double best_ucb = -1e9;
+        // Otherwise, select the child with the highest PUCT value
+        double best_puct = -1e9;
         MCTSNode *best_child = nullptr;
 
         for (auto &child : node->children) {
-            double ucb = child->ucbval();
-            if (ucb > best_ucb) {
-                best_ucb = ucb;
+            double puct = child->puctval(c_puct);
+            if (puct > best_puct) {
+                best_puct = puct;
                 best_child = child;
             }
         }
@@ -150,52 +167,63 @@ void expand(MCTSNode *node, Board &board) {
         MCTSNode *child = new MCTSNode();
         child->move = move;
         child->parent = node;
-        child->prior = scores[i] / tot_score;
+        // Ensure we don't divide by zero
+        child->prior = tot_score > 0 ? scores[i] / tot_score : 1.0 / moves.size();
         node->children.push_back(child);
     }
 }
 
 // Phase 3: Simulation
 // Simulates a random game from the current node
-// Returns the score of the game, where 1 is a win for the POV and -1 is a loss
-double simulate(Board &board, int side, int depth) {
+// Returns the score of the game, where 1 is a win for the side to move and -1 is a loss
+double simulate(Board &board, int depth) {
+    // Check for king capture (should not happen in legal play, but safety check)
     if (!(board.piece_boards[KING] & board.piece_boards[OCC(BLACK)])) {
-		// If black has no king, this is mate for white
-        return 1 * side;
+        // Black has no king, white wins
+        return board.side == WHITE ? 1.0 : -1.0;
     }
-	if (!(board.piece_boards[KING] & board.piece_boards[OCC(WHITE)])) {
-		// Likewise, if white has no king, this is mate for black
-        return -1 * side;
-	}
+    if (!(board.piece_boards[KING] & board.piece_boards[OCC(WHITE)])) {
+        // White has no king, black wins  
+        return board.side == BLACK ? 1.0 : -1.0;
+    }
 
     if (board.threefold() || board.halfmove >= 100) {
-        return 0;
+        return 0.0; // Draw
     }
 
     if (depth >= 60 && rng() % 10 == 0) {
-        return eval(board) * side;
+        // Use evaluation function, normalize to [-1, 1] range
+        double eval_score = eval(board) / 1000.0; // Assuming eval returns centipawns
+        eval_score = std::max(-1.0, std::min(1.0, eval_score)); // Clamp to [-1, 1]
+        return board.side == WHITE ? eval_score : -eval_score;
     }
 
     pzstd::vector<Move> moves;
     board.legal_moves(moves);
 
-    if (moves.size() == 0)
-        return 0; // This should never happen, but just in case
+    if (moves.size() == 0) {
+        // Should never happen
+        return 0.0;
+    }
 
     Move &move = moves[rng() % moves.size()];
     board.make_move(move);
-    Value score = -simulate(board, -side, depth + 1);
+    double score = -simulate(board, depth + 1); // Negate for opponent's perspective
     board.unmake_move();
     return score;
 }
 
 // Phase 4: Backpropagation
 // This is done in the other functions, as we update the node's win count and simulation count
-void backpropagate(MCTSNode *node, int score) {
+void backpropagate(MCTSNode *node, double score) {
     while (node != nullptr) {
         node->val += score;
         node->nsims++;
         score = -score;
         node = node->parent;
     }
+}
+
+void set_puct_constant(double c) {
+    c_puct = c;
 }
