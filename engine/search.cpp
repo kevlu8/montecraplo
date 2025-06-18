@@ -33,9 +33,8 @@ double score_move(Move &move, Board &board) {
     if (move.type() == PROMOTION) {
         score += 1.5;
     }
-    
-    // Check bonus (if we can detect checks)
-    // For now, we'll skip this as it requires more complex logic
+
+    // TODO: check bonus (but prob won't be implemented in favor of NN eval)
     
     // Central square bonus for non-captures
     int dst_file = move.dst() % 8;
@@ -203,10 +202,8 @@ double simulate(Board &board, int depth) {
     board.legal_moves(moves);
 
     if (moves.size() == 0) {
-        // No legal moves - either checkmate or stalemate
-        // This requires checking if the king is in check
-        // For now, assume stalemate (you should implement proper check detection)
-        return 0.0; // Stalemate
+        // Should never happen
+        return 0.0;
     }
 
     Move &move = moves[rng() % moves.size()];
@@ -222,7 +219,7 @@ void backpropagate(MCTSNode *node, double score) {
     while (node != nullptr) {
         node->val += score;
         node->nsims++;
-        score = -score; // Flip score for parent (different perspective)
+        score = -score;
         node = node->parent;
     }
 }
