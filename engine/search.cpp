@@ -4,6 +4,7 @@
 int games = 0, limit = 50000, last_check = 0;
 clock_t start;
 int max_time = 0;
+double c_puct = 1.414; // PUCT exploration constant
 
 std::mt19937 rng(1); // Fixed seed for debug
 
@@ -21,13 +22,29 @@ int to_cp_eval(int nsims, int val) {
 }
 
 double score_move(Move &move, Board &board) {
+    double score = 1.0; // Base score
+    
+    // Capture bonus
     if ((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & square_bits(move.dst())) {
-        return 1.5; // Capture
+        score += 2.0; // Significant bonus for captures
     }
+    
+    // Promotion bonus
     if (move.type() == PROMOTION) {
-        return 1.2;
+        score += 1.5;
     }
-    return 1;
+    
+    // Check bonus (if we can detect checks)
+    // For now, we'll skip this as it requires more complex logic
+    
+    // Central square bonus for non-captures
+    int dst_file = move.dst() % 8;
+    int dst_rank = move.dst() / 8;
+    if (dst_file >= 2 && dst_file <= 5 && dst_rank >= 2 && dst_rank <= 5) {
+        score += 0.3; // Small bonus for central squares
+    }
+    
+    return score;
 }
 
 int ngames() {
@@ -85,7 +102,7 @@ std::pair<Move, Value> search(Board &board, int time, int side) {
 }
 
 // Phase 1: Selection
-// Selects a node to explore based on UCB1
+// Selects a node to explore based on PUCT (Predictor + UCT)
 void select(MCTSNode *node, Board &board) {
     // std::cout << "selecting node " << node->move.to_string() << " games " << games;
     // std::cout << " children " << node->children.size() << " nsims " << node->nsims << " val " << node->val << std::endl;
@@ -108,14 +125,14 @@ void select(MCTSNode *node, Board &board) {
             games++;
         }
     } else {
-        // Otherwise, select the child with the highest UCB1 value
-        double best_ucb = -1e9;
+        // Otherwise, select the child with the highest PUCT value
+        double best_puct = -1e9;
         MCTSNode *best_child = nullptr;
 
         for (auto &child : node->children) {
-            double ucb = child->ucbval();
-            if (ucb > best_ucb) {
-                best_ucb = ucb;
+            double puct = child->puctval(c_puct);
+            if (puct > best_puct) {
+                best_puct = puct;
                 best_child = child;
             }
         }
@@ -151,7 +168,8 @@ void expand(MCTSNode *node, Board &board) {
         MCTSNode *child = new MCTSNode();
         child->move = move;
         child->parent = node;
-        child->prior = scores[i] / tot_score;
+        // Ensure we don't divide by zero
+        child->prior = tot_score > 0 ? scores[i] / tot_score : 1.0 / moves.size();
         node->children.push_back(child);
     }
 }
@@ -207,4 +225,8 @@ void backpropagate(MCTSNode *node, double score) {
         score = -score; // Flip score for parent (different perspective)
         node = node->parent;
     }
+}
+
+void set_puct_constant(double c) {
+    c_puct = c;
 }
