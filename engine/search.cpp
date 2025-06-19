@@ -8,6 +8,8 @@ double c_puct = 1.414; // PUCT exploration constant
 
 fast_random rng(1);
 
+double quick_material_eval(Board &board);
+
 void clear_nodes(MCTSNode *root) {
     for (auto &child : root->children) {
         clear_nodes(child);
@@ -25,22 +27,51 @@ double score_move(Move &move, Board &board) {
     double score = 1.0; // Base score
     
     // Capture bonus
-    if ((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & square_bits(move.dst())) {
-        score += 2.0; // Significant bonus for captures
+    uint64_t all_pieces = board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)];
+    if (all_pieces & square_bits(move.dst())) {
+        // Identify captured piece type for better scoring
+        Piece captured = board.mailbox[move.dst()];
+        PieceType captured_type = PieceType(captured & 7);
+        
+        switch (captured_type) {
+            case QUEEN: score += 9.0; break;
+            case ROOK: score += 5.0; break;
+            case BISHOP: case KNIGHT: score += 3.0; break;
+            case PAWN: score += 1.0; break;
+            default: score += 0.5; break;
+        }
     }
     
-    // Promotion bonus
+    // Promotion bonus - very high priority
     if (move.type() == PROMOTION) {
-        score += 1.5;
+        score += 8.0; // Very high bonus for promotion
     }
-
-    // TODO: check bonus (but prob won't be implemented in favor of NN eval)
     
-    // Central square bonus for non-captures
+    // Piece development and central control
+    Piece moving_piece = board.mailbox[move.src()];
+    PieceType piece_type = PieceType(moving_piece & 7);
+    
+    // Central square bonus for knights and bishops
     int dst_file = move.dst() % 8;
     int dst_rank = move.dst() / 8;
-    if (dst_file >= 2 && dst_file <= 5 && dst_rank >= 2 && dst_rank <= 5) {
-        score += 0.3; // Small bonus for central squares
+    if ((piece_type == KNIGHT || piece_type == BISHOP) && 
+        dst_file >= 2 && dst_file <= 5 && dst_rank >= 2 && dst_rank <= 5) {
+        score += 0.8;
+    }
+    
+    // Pawn advancement bonus
+    if (piece_type == PAWN) {
+        bool is_white = !(moving_piece >> 3);
+        int advancement = is_white ? dst_rank : (7 - dst_rank);
+        if (advancement >= 5) score += 0.5; // Bonus for advanced pawns
+    }
+    
+    // King safety penalty for moving king in opening/middlegame
+    if (piece_type == KING) {
+        int piece_count = _mm_popcnt_u64(all_pieces);
+        if (piece_count > 20) { // Still in opening/middlegame
+            score *= 0.3; // Discourage king moves when many pieces on board
+        }
     }
     
     return score;
@@ -181,17 +212,11 @@ void expand(MCTSNode *node, Board &board) {
 }
 
 // Phase 3: Simulation
-// Simulates a random game from the current node
+// Simulates a game from the current node using a mix of evaluation and limited random play
 // Returns the score of the game, where 1 is a win for the side to move and -1 is a loss
 double simulate(Board &board, int depth) {
     if (board.threefold() || board.halfmove >= 100) {
         return 0.0; // Draw
-    }
-
-    if (depth >= 60 && rng.next() % 10 == 0) {
-        // Use evaluation function, normalize to [-1, 1] range
-        double eval_score = eval(board);
-        return board.side == WHITE ? eval_score : -eval_score;
     }
 
     pzstd::vector<Move> psuedo_moves, moves;
@@ -214,11 +239,52 @@ double simulate(Board &board, int depth) {
         return 0.0;
     }
 
-    Move &move = moves[rng.next() % moves.size()];
-    board.make_move(move);
-    double score = -simulate(board, depth + 1); // Negate for opponent's perspective
-    board.unmake_move();
-    return score;
+    int piece_count = _mm_popcnt_u64(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]);
+
+    if (piece_count <= 16) {
+        double material_eval = quick_material_eval(board);
+        if (abs(material_eval) > 0.6) {
+            return board.side == WHITE ? material_eval : -material_eval;
+        }
+    }
+    
+    bool should_eval = (depth >= 15) || 
+                      (piece_count <= 12) || 
+                      (depth >= 8 && rng.next() % 3 == 0) ||
+                      (rng.next() % 20 == 0);
+
+    if (should_eval) {
+        double eval_score = eval(board);
+        if (eval_score > 0.8) return 0.9 + (eval_score - 0.8) * 0.5;
+        if (eval_score < -0.8) return -0.9 + (eval_score + 0.8) * 0.5;
+        if (eval_score > 0.5) return 0.5 + (eval_score - 0.5) * 1.33;
+        if (eval_score < -0.5) return -0.5 + (eval_score + 0.5) * 1.33;
+        return eval_score;
+    }
+
+    if (depth < 20) {
+        pzstd::vector<std::pair<Move, double>> scored_moves;
+        for (Move &move : moves) {
+            double score = score_move(move, board);
+            scored_moves.push_back({move, score});
+        }
+
+        std::sort(scored_moves.begin(), scored_moves.end(), 
+                 [](const auto &a, const auto &b) { return a.second > b.second; });
+        int selection_pool = std::min((int)scored_moves.size(), std::max(1, (int)scored_moves.size() / 3));
+        Move &move = scored_moves[rng.next() % selection_pool].first;
+        
+        board.make_move(move);
+        double score = -simulate(board, depth + 1);
+        board.unmake_move();
+        return score;
+    } else {
+        Move &move = moves[rng.next() % moves.size()];
+        board.make_move(move);
+        double score = -simulate(board, depth + 1);
+        board.unmake_move();
+        return score;
+    }
 }
 
 // Phase 4: Backpropagation
@@ -234,4 +300,29 @@ void backpropagate(MCTSNode *node, double score) {
 
 void set_puct_constant(double c) {
     c_puct = c;
+}
+
+double quick_material_eval(Board &board) {
+    double white_material = 0, black_material = 0;
+    
+    white_material += _mm_popcnt_u64(board.piece_boards[QUEEN] & board.piece_boards[OCC(WHITE)]) * 9.0;
+    white_material += _mm_popcnt_u64(board.piece_boards[ROOK] & board.piece_boards[OCC(WHITE)]) * 5.0;
+    white_material += _mm_popcnt_u64(board.piece_boards[BISHOP] & board.piece_boards[OCC(WHITE)]) * 3.0;
+    white_material += _mm_popcnt_u64(board.piece_boards[KNIGHT] & board.piece_boards[OCC(WHITE)]) * 3.0;
+    white_material += _mm_popcnt_u64(board.piece_boards[PAWN] & board.piece_boards[OCC(WHITE)]) * 1.0;
+    
+    black_material += _mm_popcnt_u64(board.piece_boards[QUEEN] & board.piece_boards[OCC(BLACK)]) * 9.0;
+    black_material += _mm_popcnt_u64(board.piece_boards[ROOK] & board.piece_boards[OCC(BLACK)]) * 5.0;
+    black_material += _mm_popcnt_u64(board.piece_boards[BISHOP] & board.piece_boards[OCC(BLACK)]) * 3.0;
+    black_material += _mm_popcnt_u64(board.piece_boards[KNIGHT] & board.piece_boards[OCC(BLACK)]) * 3.0;
+    black_material += _mm_popcnt_u64(board.piece_boards[PAWN] & board.piece_boards[OCC(BLACK)]) * 1.0;
+    
+    double material_diff = white_material - black_material;
+
+    if (material_diff >= 8.0) return 0.95;
+    if (material_diff <= -8.0) return -0.95;
+    if (material_diff >= 5.0) return 0.8;
+    if (material_diff <= -5.0) return -0.8;
+
+    return std::min(std::max(material_diff / 12.0, -0.7), 0.7);
 }

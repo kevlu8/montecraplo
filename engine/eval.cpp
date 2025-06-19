@@ -25,5 +25,5 @@ double eval(Board &board) {
 	}
 	
 	// Bind score to [-1, 1]
-	return std::min(std::max((double)score / 10000, -1.0), 1.0);
+	return std::min(std::max((double)score / 1000, -1.0), 1.0);
 }
