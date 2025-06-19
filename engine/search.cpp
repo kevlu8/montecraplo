@@ -26,12 +26,12 @@ double score_move(Move &move, Board &board) {
     
     // Capture bonus
     if ((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & square_bits(move.dst())) {
-        score += 2.0; // Significant bonus for captures
+        score += (PieceValue[board.mailbox[move.dst()]] - PieceValue[board.mailbox[move.src()]]) / 100.0;
     }
     
     // Promotion bonus
     if (move.type() == PROMOTION) {
-        score += 1.5;
+        score += (PieceValue[move.promotion()] - PieceValue[PAWN]) / 100.0;
     }
 
     // TODO: check bonus (but prob won't be implemented in favor of NN eval)
@@ -86,25 +86,21 @@ std::pair<Move, Value> search(Board &board, int time, int side) {
     }
 
     Move best_move;
-    Value best_val = -VALUE_MAX;
     int most_visited = 0;
     for (auto &child : root->children) {
         if (child->nsims > most_visited) {
             most_visited = child->nsims;
             best_move = child->move;
-            best_val = child->val;
         }
     }
     clear_nodes(root);
     delete root;
-    return {best_move, to_cp_eval(most_visited, best_val)};
+    return {best_move, to_cp_eval(root->nsims, root->val)};
 }
 
 // Phase 1: Selection
 // Selects a node to explore based on PUCT (Predictor + UCT)
 void select(MCTSNode *node, Board &board) {
-    // std::cout << "selecting node " << node->move.to_string() << " games " << games;
-    // std::cout << " children " << node->children.size() << " nsims " << node->nsims << " val " << node->val << std::endl;
     if (node->move != NullMove) board.make_move(node->move);
     if (node->children.size() == 0) {
         // If the node has no children, expand it
