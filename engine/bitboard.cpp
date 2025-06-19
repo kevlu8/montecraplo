@@ -756,10 +756,11 @@ bool Board::threefold() {
 	return false;
 }
 
-uint8_t Board::ended(pzstd::vector<Move> &moves) { // 0 = not ended, 1 = checkmate, 2 = stalemate
+uint8_t Board::ended(pzstd::vector<Move> &moves, pzstd::vector<Move> &legal_moves) { // 0 = not ended, 1 = checkmate, 2 = stalemate
 	bool check_for_side = side;
 	Square king_square = (Square)_tzcnt_u64(piece_boards[KING] & piece_boards[OCC(check_for_side)]);
 	bool in_check_base = (check_for_side == WHITE ? control(king_square).second : control(king_square).first);
+	bool move_exists = false;
 	for (const Move &move : moves) {
 		make_move(move);
 		king_square = (Square)_tzcnt_u64(piece_boards[KING] & piece_boards[OCC(check_for_side)]);
@@ -767,9 +768,11 @@ uint8_t Board::ended(pzstd::vector<Move> &moves) { // 0 = not ended, 1 = checkma
 		bool in_check = (check_for_side == WHITE ? ks_control.second : ks_control.first);
 		unmake_move();
 		if (!in_check) {
-			return 0;
+			legal_moves.push_back(move);
+			move_exists = true;
 		}
 	}
+	if (move_exists) return 0;
 	if (!in_check_base) return 2;
 	return 1;
 }

@@ -116,5 +116,5 @@ struct Board {
 	void recompute_hash();
 
 	bool threefold();
-	uint8_t ended(pzstd::vector<Move> &);
+	uint8_t ended(pzstd::vector<Move> &, pzstd::vector<Move> &);
 };

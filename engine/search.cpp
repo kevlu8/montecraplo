@@ -150,10 +150,10 @@ void expand(MCTSNode *node, Board &board) {
         return; // No moves to expand
     }
 
-    pzstd::vector<Move> moves;
-    board.legal_moves(moves);
+    pzstd::vector<Move> psuedo_moves, moves;
+    board.legal_moves(psuedo_moves);
 
-    uint8_t end = board.ended(moves);
+    uint8_t end = board.ended(psuedo_moves, moves);
 
     if (end) {
         // Stalemate or checkmate
@@ -184,14 +184,14 @@ void expand(MCTSNode *node, Board &board) {
 // Simulates a random game from the current node
 // Returns the score of the game, where 1 is a win for the side to move and -1 is a loss
 double simulate(Board &board, int depth) {
-    if (!(board.piece_boards[KING] & board.piece_boards[OCC(board.side)])) {
-        // We have no king, opponent wins
-        return -1.0;
-    }
-    if (!(board.piece_boards[KING] & board.piece_boards[OCC(!board.side)])) {
-        // Opponent has no king, we win
-        return 1.0;
-    }
+    // if (!(board.piece_boards[KING] & board.piece_boards[OCC(board.side)])) {
+    //     // We have no king, opponent wins
+    //     return -1.0;
+    // }
+    // if (!(board.piece_boards[KING] & board.piece_boards[OCC(!board.side)])) {
+    //     // Opponent has no king, we win
+    //     return 1.0;
+    // }
 
     if (board.threefold() || board.halfmove >= 100) {
         return 0.0; // Draw
@@ -204,10 +204,10 @@ double simulate(Board &board, int depth) {
         return board.side == WHITE ? eval_score : -eval_score;
     }
 
-    pzstd::vector<Move> moves;
-    board.legal_moves(moves);
+    pzstd::vector<Move> psuedo_moves, moves;
+    board.legal_moves(psuedo_moves);
 
-    uint8_t end = board.ended(moves);
+    uint8_t end = board.ended(psuedo_moves, moves);
 
     if (end == 1) {
         // Checkmate
