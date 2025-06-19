@@ -26,12 +26,12 @@ double score_move(Move &move, Board &board) {
     
     // Capture bonus
     if ((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & square_bits(move.dst())) {
-        score += (PieceValue[board.mailbox[move.dst()]] - PieceValue[board.mailbox[move.src()]]) / 100.0;
+        score += 2.0;
     }
     
     // Promotion bonus
     if (move.type() == PROMOTION) {
-        score += (PieceValue[move.promotion()] - PieceValue[PAWN]) / 100.0;
+        score += 1.5;
     }
 
     // TODO: check bonus (but prob won't be implemented in favor of NN eval)
