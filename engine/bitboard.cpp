@@ -755,3 +755,21 @@ bool Board::threefold() {
 	}
 	return false;
 }
+
+bool Board::is_stalemate(pzstd::vector<Move> &moves) {
+	bool check_for_side = side;
+	Square king_square = (Square)_tzcnt_u64(piece_boards[KING] & piece_boards[OCC(check_for_side)]);
+	bool in_check = (check_for_side == WHITE ? control(king_square).second : control(king_square).first);
+	if (in_check) return false; // King is currently in check therefore stalemate is impossible
+	for (const Move &move : moves) {
+		make_move(move);
+		king_square = (Square)_tzcnt_u64(piece_boards[KING] & piece_boards[OCC(check_for_side)]);
+		auto ks_control = control(king_square);
+		in_check = (check_for_side == WHITE ? ks_control.second : ks_control.first);
+		unmake_move();
+		if (!in_check) {
+			return false; // If we can make a move that doesn't put us in check, it's not stalemate
+		}
+	}
+	return true;
+}
