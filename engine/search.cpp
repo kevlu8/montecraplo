@@ -184,6 +184,15 @@ void expand(MCTSNode *node, Board &board) {
 // Simulates a random game from the current node
 // Returns the score of the game, where 1 is a win for the side to move and -1 is a loss
 double simulate(Board &board, int depth) {
+    if (!(board.piece_boards[KING] & board.piece_boards[OCC(board.side)])) {
+        // We have no king, opponent wins
+        return -1.0;
+    }
+    if (!(board.piece_boards[KING] & board.piece_boards[OCC(!board.side)])) {
+        // Opponent has no king, we win
+        return 1.0;
+    }
+
     if (board.threefold() || board.halfmove >= 100) {
         return 0.0; // Draw
     }
