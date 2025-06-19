@@ -27,10 +27,11 @@ int main(int argc, char *argv[]) {
 			std::cout << "id name MonteCraplo " << VERSION << std::endl;
 			std::cout << "id author kevlu8 and wdotmathree" << std::endl;
 			std::cout << "uciok" << std::endl;
-		} else if (command == "isstale") {
+		} else if (command == "isend") {
 			auto legal_moves = pzstd::vector<Move>();
+			auto placeholder = pzstd::vector<Move>();
 			board.legal_moves(legal_moves);
-			std::cout << (board.is_stalemate(legal_moves) ? "true" : "false") << std::endl;
+			std::cout << (int)board.ended(legal_moves, placeholder) << std::endl;
 			board.print_board();
 		} else if (command == "isready") {
 			std::cout << "readyok" << std::endl;
