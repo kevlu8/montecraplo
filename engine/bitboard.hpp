@@ -116,4 +116,5 @@ struct Board {
 	void recompute_hash();
 
 	bool threefold();
+	bool is_stalemate(pzstd::vector<Move> &);
 };

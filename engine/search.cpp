@@ -97,7 +97,7 @@ std::pair<Move, Value> search(Board &board, int time, int side) {
     }
     clear_nodes(root);
     delete root;
-    return {best_move, best_val};
+    return {best_move, to_cp_eval(most_visited, best_val)};
 }
 
 // Phase 1: Selection
@@ -153,6 +153,11 @@ void expand(MCTSNode *node, Board &board) {
     pzstd::vector<Move> moves;
     board.legal_moves(moves);
 
+    if (board.is_stalemate(moves)) {
+        // Stalemate
+        return;
+    }
+
     double tot_score = 0;
     pzstd::vector<double> scores;
     for (int i = 0; i < moves.size(); i++) {
@@ -200,6 +205,11 @@ double simulate(Board &board, int depth) {
 
     pzstd::vector<Move> moves;
     board.legal_moves(moves);
+
+    if (board.is_stalemate(moves)) {
+        // Stalemate
+        return 0.0;
+    }
 
     if (moves.size() == 0) {
         // Should never happen
