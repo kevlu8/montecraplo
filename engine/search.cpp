@@ -6,7 +6,7 @@ clock_t start;
 int max_time = 0;
 double c_puct = 1.414; // PUCT exploration constant
 
-std::mt19937 rng(1); // Fixed seed for debug
+fast_random rng(1);
 
 void clear_nodes(MCTSNode *root) {
     for (auto &child : root->children) {
@@ -111,7 +111,7 @@ void select(MCTSNode *node, Board &board) {
         expand(node, board);
         // Then, simulate a child
         if (node->children.size() > 0) {
-            MCTSNode *child = node->children[rng() % node->children.size()];
+            MCTSNode *child = node->children[rng.next() % node->children.size()];
             board.make_move(child->move);
             double score = -simulate(board);
             board.unmake_move();
@@ -188,7 +188,7 @@ double simulate(Board &board, int depth) {
         return 0.0; // Draw
     }
 
-    if (depth >= 60 && rng() % 10 == 0) {
+    if (depth >= 60 && rng.next() % 10 == 0) {
         // Use evaluation function, normalize to [-1, 1] range
         double eval_score = eval(board);
         return board.side == WHITE ? eval_score : -eval_score;
@@ -214,7 +214,7 @@ double simulate(Board &board, int depth) {
         return 0.0;
     }
 
-    Move &move = moves[rng() % moves.size()];
+    Move &move = moves[rng.next() % moves.size()];
     board.make_move(move);
     double score = -simulate(board, depth + 1); // Negate for opponent's perspective
     board.unmake_move();
