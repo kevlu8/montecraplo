@@ -8,8 +8,6 @@ double c_puct = 1.414; // PUCT exploration constant
 
 fast_random rng(1);
 
-double quick_material_eval(Board &board);
-
 void clear_nodes(MCTSNode *root) {
     for (auto &child : root->children) {
         clear_nodes(child);
@@ -27,24 +25,13 @@ double score_move(Move &move, Board &board) {
     double score = 1.0; // Base score
     
     // Capture bonus
-    uint64_t all_pieces = board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)];
-    if (all_pieces & square_bits(move.dst())) {
-        // Identify captured piece type for better scoring
-        Piece captured = board.mailbox[move.dst()];
-        PieceType captured_type = PieceType(captured & 7);
-        
-        switch (captured_type) {
-            case QUEEN: score += 9.0; break;
-            case ROOK: score += 5.0; break;
-            case BISHOP: case KNIGHT: score += 3.0; break;
-            case PAWN: score += 1.0; break;
-            default: score += 0.5; break;
-        }
+    if ((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & square_bits(move.dst())) {
+        score += PieceValue[board.mailbox[move.dst()] & 7] / 100.0;
     }
     
-    // Promotion bonus - very high priority
+    // Promotion bonus
     if (move.type() == PROMOTION) {
-        score += 8.0; // Very high bonus for promotion
+        score += 8.0;
     }
     
     // Piece development and central control
@@ -63,12 +50,12 @@ double score_move(Move &move, Board &board) {
     if (piece_type == PAWN) {
         bool is_white = !(moving_piece >> 3);
         int advancement = is_white ? dst_rank : (7 - dst_rank);
-        if (advancement >= 5) score += 0.5; // Bonus for advanced pawns
+        if (advancement >= 5) score += 0.5;
     }
     
     // King safety penalty for moving king in opening/middlegame
     if (piece_type == KING) {
-        int piece_count = _mm_popcnt_u64(all_pieces);
+        int piece_count = _mm_popcnt_u64(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]);
         if (piece_count > 20) { // Still in opening/middlegame
             score *= 0.3; // Discourage king moves when many pieces on board
         }
@@ -242,7 +229,7 @@ double simulate(Board &board, int depth) {
     int piece_count = _mm_popcnt_u64(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]);
 
     if (piece_count <= 16) {
-        double material_eval = quick_material_eval(board);
+        double material_eval = fast_eval(board);
         if (abs(material_eval) > 0.6) {
             return board.side == WHITE ? material_eval : -material_eval;
         }
@@ -300,29 +287,4 @@ void backpropagate(MCTSNode *node, double score) {
 
 void set_puct_constant(double c) {
     c_puct = c;
-}
-
-double quick_material_eval(Board &board) {
-    double white_material = 0, black_material = 0;
-    
-    white_material += _mm_popcnt_u64(board.piece_boards[QUEEN] & board.piece_boards[OCC(WHITE)]) * 9.0;
-    white_material += _mm_popcnt_u64(board.piece_boards[ROOK] & board.piece_boards[OCC(WHITE)]) * 5.0;
-    white_material += _mm_popcnt_u64(board.piece_boards[BISHOP] & board.piece_boards[OCC(WHITE)]) * 3.0;
-    white_material += _mm_popcnt_u64(board.piece_boards[KNIGHT] & board.piece_boards[OCC(WHITE)]) * 3.0;
-    white_material += _mm_popcnt_u64(board.piece_boards[PAWN] & board.piece_boards[OCC(WHITE)]) * 1.0;
-    
-    black_material += _mm_popcnt_u64(board.piece_boards[QUEEN] & board.piece_boards[OCC(BLACK)]) * 9.0;
-    black_material += _mm_popcnt_u64(board.piece_boards[ROOK] & board.piece_boards[OCC(BLACK)]) * 5.0;
-    black_material += _mm_popcnt_u64(board.piece_boards[BISHOP] & board.piece_boards[OCC(BLACK)]) * 3.0;
-    black_material += _mm_popcnt_u64(board.piece_boards[KNIGHT] & board.piece_boards[OCC(BLACK)]) * 3.0;
-    black_material += _mm_popcnt_u64(board.piece_boards[PAWN] & board.piece_boards[OCC(BLACK)]) * 1.0;
-    
-    double material_diff = white_material - black_material;
-
-    if (material_diff >= 8.0) return 0.95;
-    if (material_diff <= -8.0) return -0.95;
-    if (material_diff >= 5.0) return 0.8;
-    if (material_diff <= -5.0) return -0.8;
-
-    return std::min(std::max(material_diff / 12.0, -0.7), 0.7);
 }
