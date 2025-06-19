@@ -241,7 +241,7 @@ double simulate(Board &board, int depth) {
                       (rng.next() % 20 == 0);
 
     if (should_eval) {
-        double eval_score = eval(board);
+        double eval_score = fast_eval(board);
         if (eval_score > 0.8) return 0.9 + (eval_score - 0.8) * 0.5;
         if (eval_score < -0.8) return -0.9 + (eval_score + 0.8) * 0.5;
         if (eval_score > 0.5) return 0.5 + (eval_score - 0.5) * 1.33;
