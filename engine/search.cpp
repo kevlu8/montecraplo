@@ -184,23 +184,13 @@ void expand(MCTSNode *node, Board &board) {
 // Simulates a random game from the current node
 // Returns the score of the game, where 1 is a win for the side to move and -1 is a loss
 double simulate(Board &board, int depth) {
-    // if (!(board.piece_boards[KING] & board.piece_boards[OCC(board.side)])) {
-    //     // We have no king, opponent wins
-    //     return -1.0;
-    // }
-    // if (!(board.piece_boards[KING] & board.piece_boards[OCC(!board.side)])) {
-    //     // Opponent has no king, we win
-    //     return 1.0;
-    // }
-
     if (board.threefold() || board.halfmove >= 100) {
         return 0.0; // Draw
     }
 
     if (depth >= 60 && rng() % 10 == 0) {
         // Use evaluation function, normalize to [-1, 1] range
-        double eval_score = eval(board) / 1000.0; // Assuming eval returns centipawns
-        eval_score = std::max(-1.0, std::min(1.0, eval_score)); // Clamp to [-1, 1]
+        double eval_score = eval(board);
         return board.side == WHITE ? eval_score : -eval_score;
     }
 
