@@ -7,6 +7,7 @@
 #include "movegen.hpp"
 #include "node.hpp"
 #include "eval.hpp"
+#include "random.hpp"
 #include "util.hpp"
 
 int ngames();
