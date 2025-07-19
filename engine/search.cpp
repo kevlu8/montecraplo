@@ -109,14 +109,24 @@ void select(MCTSNode *node, Board &board) {
     if (node->children.size() == 0) {
         // If the node has no children, expand it
         expand(node, board);
-        // Then, simulate a child
+        // Then, simulate the best child based on PUCT
         if (node->children.size() > 0) {
-            MCTSNode *child = node->children[rng.next() % node->children.size()];
-            board.make_move(child->move);
-            double score = -simulate(board);
-            board.unmake_move();
-            backpropagate(child, score);
-            games++;
+            MCTSNode *best_child = nullptr;
+            double best_puct = -1e9;
+            for (auto &child : node->children) {
+                double puct = child->puctval(c_puct);
+                if (puct > best_puct) {
+                    best_puct = puct;
+                    best_child = child;
+                }
+            }
+            if (best_child) {
+                board.make_move(best_child->move);
+                double score = -simulate(board);
+                board.unmake_move();
+                backpropagate(best_child, score);
+                games++;
+            }
         } else {
             // If the node has no children, we are at a terminal node
             double score = -simulate(board);

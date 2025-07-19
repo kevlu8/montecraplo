@@ -14,6 +14,7 @@ struct MCTSNode {
 
     inline double puctval(double c_puct = 1.414) {
         if (nsims == 0) return 1e9; // prioritize unexplored nodes
+        if (parent == nullptr) return 0; // root node edge case
         // PUCT formula: Q + C * P * sqrt(N) / (1 + n)
         // where Q is average value, C is exploration constant, P is prior probability,
         // N is parent visits, n is node visits
