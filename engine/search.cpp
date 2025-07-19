@@ -63,7 +63,7 @@ std::pair<Move, Value> search(Board &board, int time, int side) {
     root->children.clear();
 
     while (games < limit) {
-        if (games - last_check >= 1000) {
+        if (games - last_check >= 200) {
             if ((clock() - start) / CLOCKS_PER_MS > max_time) {
                 break;
             }
@@ -198,7 +198,7 @@ double simulate(Board &board, int depth) {
         return 0.0; // Draw
     }
 
-    if (depth >= 60 && rng.next() % 10 == 0) {
+    if (depth >= 20 && rng.next() % 10 == 0) {
         // Use evaluation function, normalize to [-1, 1] range
         double eval_score = eval(board);
         return board.side == WHITE ? eval_score : -eval_score;
