@@ -4,17 +4,15 @@
 fast_random rng(1);
 uint64_t its = 0;
 
-void clear_nodes(MCTSNode *root) {
-    for (auto &child : root->children) {
-        clear_nodes(child);
-        delete child;
+void clear_nodes(MCTSNode *u) {
+    if (!u) return;
+    MCTSNode *cur = u->first_child;
+    while (cur) {
+        MCTSNode *next = cur->next_sibling;
+        clear_nodes(cur);
+        delete cur;
+        cur = next;
     }
-    root->children.clear();
-}
-
-int to_cp_eval(int visits, int val) {
-    if (visits == 0) return 0;
-    return ((double)val / visits) * 10000; // +100 = definite win, -100 = definite loss
 }
 
 // Phase 1: Selection
@@ -25,12 +23,14 @@ MCTSNode *select(MCTSNode *u, Position &pos) {
     double best_ucb1 = -INFINITY;
     MCTSNode *best_child = nullptr;
 
-    for (auto v : u->children) {
-        double ucb1 = v->ucb1();
+    MCTSNode *cur = u->first_child;
+    while (cur) {
+        double ucb1 = cur->ucb1();
         if (ucb1 > best_ucb1) {
             best_ucb1 = ucb1;
-            best_child = v;
+            best_child = cur;
         }
+        cur = cur->next_sibling;
     }
 
     if (!best_child) return u;
@@ -48,6 +48,8 @@ MCTSNode *expand(MCTSNode *u, Position &pos) {
     pzstd::vector<Move> moves;
     pos.pseudolegal_moves(moves);
 
+    pzstd::vector<MCTSNode *> children;
+
     for (auto &m : moves) {
         if (!pos.is_legal(m)) continue;
 
@@ -55,17 +57,24 @@ MCTSNode *expand(MCTSNode *u, Position &pos) {
         c->parent = u;
         c->move = m;
 
-        u->children.push_back(c);
+        // Link the new node to the parent or its previous sibling
+        if (!u->first_child) {
+            u->first_child = c;
+        } else {
+            MCTSNode *current = children[children.size() - 1];
+            current->next_sibling = c;
+        }
+        children.push_back(c);
     }
 
-    return u->children.empty() ? u : u->children[rng.next() % u->children.size()];
+    return children.empty() ? u : children[rng.next() % children.size()];
 }
 
 // Phase 3: Simulation / Rollout
 // Take the selected child and simulate a random game. Return the result.
-int rollout(MCTSNode *u, Position &p) {
+int rollout(MCTSNode *u, Position &p, RepetitionHandler &rp) {
     Position pos = p; // Must copy to avoid modifying the original
-    int res = 0;
+    int res = 0, ply = 0;
     pzstd::vector<Move> moves, legal_moves;
     while (true) {
         // Check for game over (kinda expensive)
@@ -73,11 +82,7 @@ int rollout(MCTSNode *u, Position &p) {
         // each move. If no moves are legal, the game is over.
         
         // First, check the cheaper stuff
-        if (pos.halfmove >= 100 || pos.insufficient_material()) break;
-
-        // Where is threefold? Well, there's no cheap way of checking it.
-        // We can't just copy the entire position history...
-        // For now, rely on the other draw conditions
+        if (pos.halfmove >= 100 || pos.insufficient_material() || rp.threefold(ply, pos.zobrist_without_ep())) break;
 
         // Now for mate detection
         moves.clear(); legal_moves.clear();
@@ -104,7 +109,11 @@ int rollout(MCTSNode *u, Position &p) {
         // Pick a random move
         Move m = legal_moves[rng.next() % legal_moves.size()];
         pos.make_move(m);
+        rp.push_hash(pos.zobrist_without_ep());
+        ply++;
     }
+
+    while (ply--) rp.pop_hash(); // Reset rp to its original state
 
     return res;
 }
@@ -127,17 +136,19 @@ MCTSNode *bestchild(MCTSNode *root) {
     int best_visits = 0;
     MCTSNode *best_child = nullptr;
 
-    for (auto u : root->children) {
-        if (u->visits > best_visits) {
-            best_visits = u->visits;
-            best_child = u;
+    MCTSNode *cur = root->first_child;
+    while (cur) {
+        if (cur->visits > best_visits) {
+            best_visits = cur->visits;
+            best_child = cur;
         }
+        cur = cur->next_sibling;
     }
 
     return best_child;
 }
 
-void search(Position &p, int time) {
+void search(Position &p, RepetitionHandler &rp, int time) {
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 
     MCTSNode *root = new MCTSNode();
@@ -159,7 +170,7 @@ void search(Position &p, int time) {
             if (elapsed >= time) break;
 
             // Check for mem limit
-            if (total_nodes * 3000 / 1024 / 1024 >= 256) break;
+            if (total_nodes * sizeof(MCTSNode) / 1024 / 1024 >= 256) break;
         }
 
         Position pos = p; // Must copy to avoid modifying the original
@@ -168,15 +179,20 @@ void search(Position &p, int time) {
         auto *c = expand(u, pos); // Expand the leaf node and get the child
 
         pos.make_move(c->move);
+        rp.push_hash(pos.zobrist_without_ep());
 
-        int res = rollout(c, pos); // Simulate a game and get the result
+        int res = rollout(c, pos, rp); // Simulate a game and get the result
         backprop(c, res); // Propagate the result
+
+        rp.pop_hash();
     }
 
     std::cout << "info string visits:\n";
     uint64_t tot = root->visits;
-    for (auto u : root->children) {
-        std::cout << "info string " << u->move.to_string() << ": " << u->visits * 100 / tot << "% = " << u->visits << "\n";
+    MCTSNode *cur = root->first_child;
+    while (cur) {
+        std::cout << "info string " << cur->move.to_string() << ": " << cur->visits * 100 / tot << "% = " << cur->visits << "\n";
+        cur = cur->next_sibling;
     }
     std::cout << "bestmove " << bestchild(root)->move.to_string() << std::endl;
 

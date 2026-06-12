@@ -9,10 +9,10 @@ struct MCTSNode {
     int visits;
     Move move;
     MCTSNode *parent;
-    pzstd::vector<MCTSNode *> children;
+    MCTSNode *first_child, *next_sibling;
     bool leaf;
 
-    MCTSNode() : val(0), visits(0), move(NullMove), parent(nullptr), leaf(true) { total_nodes++; }
+    MCTSNode() : val(0), visits(0), move(NullMove), parent(nullptr), first_child(nullptr), next_sibling(nullptr), leaf(true) { total_nodes++; }
 
     inline double ucb1(double c_puct = 1.414) {
         if (visits == 0) return INFINITY; // prioritize unexplored nodes

@@ -13,8 +13,9 @@ bool dfrc_uci = false;
 int main(int argc, char *argv[]) {
 	if (argc == 2 && std::string(argv[1]) == "bench") {
 		Position pos = Position();
+		RepetitionHandler rp;
 		std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-		search(pos, 1000);
+		search(pos, rp, 1000);
 		std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 		std::cout << 1 << " nodes " << (int)(its / ((double)(elapsed) / 1000.0)) << " nps" << std::endl;
@@ -23,6 +24,7 @@ int main(int argc, char *argv[]) {
 	std::cout << "MonteCraplo " << VERSION << " developed by kevlu8 and wdotmathree" << std::endl;
 	std::string command;
 	Position pos = Position();
+	RepetitionHandler rp;
 	std::thread searchthread;
 	while (getline(std::cin, command)) {
 		if (command == "uci") {
@@ -37,12 +39,14 @@ int main(int argc, char *argv[]) {
 			// either `position startpos` or `position fen ...`
 			if (command.find("startpos") != std::string::npos) {
 				pos = Position();
+				rp.clear(); rp.push_hash(pos.zobrist_without_ep());
 			} else if (command.find("fen") != std::string::npos) {
 				std::string fen = command.substr(command.find("fen") + 4);
 				if (fen.find("moves") != std::string::npos) {
 					fen = fen.substr(0, fen.find("moves"));
 				}
 				pos = Position(fen);
+				rp.clear(); rp.push_hash(pos.zobrist_without_ep());
 			}
 			if (command.find("moves") != std::string::npos) {
 				std::string moves = command.substr(command.find("moves") + 6);
@@ -50,6 +54,7 @@ int main(int argc, char *argv[]) {
 				std::string move;
 				while (ss >> move) {
 					pos.make_move(Move::from_string(move, &pos));
+					rp.push_hash(pos.zobrist_without_ep());
 				}
 			}
 		} else if (command == "quit") {
@@ -85,9 +90,9 @@ int main(int argc, char *argv[]) {
 			int timeleft = pos.side ? btime : wtime;
 			int inc = pos.side ? binc : winc;
 			if (inf)
-				search(pos, 1e9);
+				search(pos, rp, 1e9);
 			else
-				search(pos, timemgmt(timeleft, inc));
+				search(pos, rp, timemgmt(timeleft, inc));
 		}
 	}
 }
