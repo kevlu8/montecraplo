@@ -85,8 +85,8 @@ MCTSNode *expand(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
 
 // Phase 3: Simulation / Rollout
 // Take the selected child and simulate a random game. Return the result.
-double rollout(MCTSNode *u, Position &p, RepetitionHandler &rp) {
-	Position pos = p; // Must copy to avoid modifying the original
+double rollout(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
+	int orig_side = pos.side;
 	int ply = 0;
 	double res = 0.0;
 	pzstd::vector<Move> moves, legal_moves;
@@ -94,7 +94,7 @@ double rollout(MCTSNode *u, Position &p, RepetitionHandler &rp) {
 		// First, check for excessively long games. Once our rollout reaches,
 		// say, 40 plies, we stop the rollout and return a simple evaluation.
 		if (ply >= 40) {
-			res = std::clamp(eval(pos) / 1000.0, -1.0, 1.0) * (pos.side == p.side ? 1 : -1);
+			res = std::clamp(eval(pos) / 1000.0, -1.0, 1.0) * (pos.side == orig_side ? 1 : -1);
 			break;
 		}
 
@@ -119,9 +119,9 @@ double rollout(MCTSNode *u, Position &p, RepetitionHandler &rp) {
 		if (!legal_exists) {
 			if (pos.checkers[pos.side])
 				// imagine pos.side == white, this means white lost.
-				// if p.side is also white, then the result of this rollout is
+				// if orig_side is also white, then the result of this rollout is
 				// a loss for u, so we set res = -1.
-				res = pos.side == p.side ? -1 : 1;
+				res = pos.side == orig_side ? -1 : 1;
 			else
 				res = 0; // Stalemate
 			break;
