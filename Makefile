@@ -1,12 +1,12 @@
 EXE ?= montecraplo
 
 CXX := g++
-CXXFLAGS := -std=c++17 -march=native
+CXXFLAGS := -std=c++20 -march=native
 RELEASEFLAGS = -O3
 DEBUGFLAGS = -g -fsanitize=address,undefined
 
-SRCS := $(wildcard engine/*.cpp engine/nn/*.cpp)
-HDRS := $(wildcard engine/*.hpp engine/pzstl/*.hpp)
+SRCS := $(wildcard engine/*.cpp engine/arch/*.cpp)
+HDRS := $(wildcard engine/*.hpp engine/pzstl/*.hpp engine/arch/*.hpp)
 OBJS := $(SRCS:.cpp=.o)
 
 .PHONY: release debug clean

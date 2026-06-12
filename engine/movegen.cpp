@@ -1,117 +1,220 @@
 #include "movegen.hpp"
 
-struct MagicEntry {
-	Bitboard mask;
-	uint32_t offset;
-};
-
 Bitboard knight_movetable[64];
 Bitboard king_movetable[64];
+
+#ifdef USE_PEXT
+
 Bitboard rook_movetable[102400];
 Bitboard bishop_movetable[5248];
+
+struct MagicEntry {
+	Bitboard mask;
+	Bitboard *ptr;
+};
+
+#else
+
+#include "magics.hpp"
+
+Bitboard sliding_movetable[88507];
+
+struct MagicEntry {
+	Bitboard mask;
+	uint64_t magic;
+	Bitboard *ptr;
+};
+
+#endif
+
+Bitboard rook_blockers[64][64];
+Bitboard bishop_blockers[64][64];
+Bitboard rook_blockers_pure[64][64];
+Bitboard bishop_blockers_pure[64][64];
+Bitboard castle_blockers[64][64];
 
 MagicEntry rook_magics[64];
 MagicEntry bishop_magics[64];
 
 void gen_rook_moves(int sq, Bitboard piece) {
 	Bitboard board = 0;
-	int idx = 0;
 	Bitboard rank = 0x00000000000000ff;
 	Bitboard file = 0x0101010101010101;
-	uint32_t offset;
-	if (sq == 0)
-		offset = 0;
-	else
-		offset = rook_magics[sq].offset;
+
+	Bitboard rankray = rank << (sq & 0b111000);
+	Bitboard fileray = file << (sq & 0b111);
+
+	Bitboard west = rankray & (piece - 1);
+	Bitboard south = fileray & (piece - 1);
+	Bitboard east = rankray ^ west ^ piece;
+	Bitboard north = fileray ^ south ^ piece;
+
+#ifdef USE_PEXT
+	Bitboard *ptr = rook_movetable;
+	if (sq != 0)
+		ptr = rook_magics[sq].ptr;
+#else
+	Bitboard *ptr = sliding_movetable + rook_magics_src[sq].offset;
+	rook_magics[sq].ptr = ptr;
+#endif
 	do {
 		// Generate moves for this board (bitwise magic don't ask)
-		Bitboard rankray = rank << (sq & 0b111000);
-		Bitboard fileray = file << (sq & 0b111);
-
 		Bitboard moves = 0;
-		Bitboard west = rankray & (piece - 1);
 		if (west & board)
-			moves |= west & ~((1LL << (63 - _lzcnt_u64(west & board))) - 1);
+			moves |= west & ~((1ULL << (63 - arch::lzcnt(west & board))) - 1);
 		else
 			moves |= west;
-		Bitboard south = fileray & (piece - 1);
 		if (south & board)
-			moves |= south & ~((1LL << (63 - _lzcnt_u64(south & board))) - 1);
+			moves |= south & ~((1ULL << (63 - arch::lzcnt(south & board))) - 1);
 		else
 			moves |= south;
-		Bitboard east = rankray ^ west ^ piece;
-		moves |= east & _blsmsk_u64(east & board);
-		Bitboard north = fileray ^ south ^ piece;
-		moves |= north & _blsmsk_u64(north & board);
+		moves |= east & arch::blsmsk(east & board);
+		moves |= north & arch::blsmsk(north & board);
 
-		rook_movetable[offset + idx] = moves;
+#ifdef USE_PEXT
+		*ptr = moves;
+#else
+		uint64_t off = board | ~rook_magics[sq].mask;
+		off *= rook_magics[sq].magic;
+		off >>= 64 - 12;
+
+		ptr[off] = moves;
+#endif
 		// Prepare next board (this works i promise)
 		board = (board - rook_magics[sq].mask) & rook_magics[sq].mask;
-		idx++;
+
+#ifdef USE_PEXT
+		ptr++;
+#endif
 	} while (board);
+#ifdef USE_PEXT
 	if (sq != 63)
-		rook_magics[sq + 1].offset = offset + idx;
+		rook_magics[sq + 1].ptr = ptr;
+#else
+	rook_magics[sq].mask = ~rook_magics[sq].mask;
+#endif
+
+	// Generate blocker masks for all moves
+	board = square_bits((Square)sq);
+	for (int dst = sq; dst < 64; dst++, board <<= 1) {
+		if (board & east) {
+			rook_blockers[sq][dst] = east & (arch::blsmsk(board) >> 1);
+			rook_blockers[dst][sq] = rook_blockers[sq][dst];
+			rook_blockers_pure[dst][sq] = rook_blockers_pure[sq][dst] = rook_blockers[sq][dst];
+		} else if (board & north) {
+			rook_blockers[sq][dst] = north & (arch::blsmsk(board) >> 1);
+			rook_blockers[dst][sq] = rook_blockers[sq][dst];
+			rook_blockers_pure[dst][sq] = rook_blockers_pure[sq][dst] = rook_blockers[sq][dst];
+		}
+	}
+	rook_blockers[sq][sq] = 0;
 }
 
 void gen_bishop_moves(int sq, Bitboard piece) {
 	Bitboard board = 0;
-	int idx = 0;
 	Bitboard diag = 0x8040201008040201;
 	Bitboard anti_diag = 0x0102040810204080;
-	uint32_t offset;
-	if (sq == 0)
-		offset = 0;
+
+	int shift = (sq & 0b111) - (sq >> 3);
+	Bitboard diagray;
+	if (shift >= 0)
+		diagray = (diag >> (shift * 8));
 	else
-		offset = bishop_magics[sq].offset;
+		diagray = (diag << (-shift * 8));
+	Bitboard antiray;
+	shift = 7 - (sq & 0b111) - (sq >> 3);
+	if (shift >= 0)
+		antiray = (anti_diag >> (shift * 8));
+	else
+		antiray = (anti_diag << (-shift * 8));
+
+	Bitboard sw = diagray & (piece - 1);
+	Bitboard se = antiray & (piece - 1);
+	Bitboard ne = diagray ^ sw ^ piece;
+	Bitboard nw = antiray ^ se ^ piece;
+
+#ifdef USE_PEXT
+	Bitboard *ptr = bishop_movetable;
+	if (sq != 0)
+		ptr = bishop_magics[sq].ptr;
+#else
+	Bitboard *ptr = sliding_movetable + bishop_magics_src[sq].offset;
+	bishop_magics[sq].ptr = ptr;
+#endif
 	do {
 		// Generate moves for this board (bitwise magic don't ask)
-		int shift = (sq & 0b111) - (sq >> 3);
-		Bitboard diagray;
-		if (shift >= 0)
-			diagray = (diag >> (shift * 8));
-		else
-			diagray = (diag << (-shift * 8));
-		Bitboard antiray;
-		shift = 7 - (sq & 0b111) - (sq >> 3);
-		if (shift >= 0)
-			antiray = (anti_diag >> (shift * 8));
-		else
-			antiray = (anti_diag << (-shift * 8));
-
 		Bitboard moves = 0;
-		Bitboard sw = diagray & (piece - 1);
 		if (sw & board)
-			moves |= sw & ~((1LL << (63 - _lzcnt_u64(sw & board))) - 1);
+			moves |= sw & ~((1ULL << (63 - arch::lzcnt(sw & board))) - 1);
 		else
 			moves |= sw;
-		Bitboard se = antiray & (piece - 1);
 		if (se & board)
-			moves |= se & ~((1LL << (63 - _lzcnt_u64(se & board))) - 1);
+			moves |= se & ~((1ULL << (63 - arch::lzcnt(se & board))) - 1);
 		else
 			moves |= se;
-		Bitboard ne = diagray ^ sw ^ piece;
-		moves |= ne & _blsmsk_u64(ne & board);
-		Bitboard nw = antiray ^ se ^ piece;
-		moves |= nw & _blsmsk_u64(nw & board);
+		moves |= ne & arch::blsmsk(ne & board);
+		moves |= nw & arch::blsmsk(nw & board);
 
-		bishop_movetable[offset + idx] = moves;
+#ifdef USE_PEXT
+		*ptr = moves;
+#else
+		uint64_t off = board | ~bishop_magics[sq].mask;
+		off *= bishop_magics[sq].magic;
+		off >>= 64 - 9;
+
+		ptr[off] = moves;
+#endif
 		// Prepare next board (this works i promise)
 		board = (board - bishop_magics[sq].mask) & bishop_magics[sq].mask;
-		idx++;
+
+#ifdef USE_PEXT
+		ptr++;
+#endif
 	} while (board);
+#ifdef USE_PEXT
 	if (sq != 63)
-		bishop_magics[sq + 1].offset = offset + idx;
+		bishop_magics[sq + 1].ptr = ptr;
+#else
+	bishop_magics[sq].mask = ~bishop_magics[sq].mask;
+#endif
+
+	// Generate blocker masks for all moves
+	board = square_bits((Square)sq);
+	for (int dst = sq; dst < 64; dst++, board <<= 1) {
+		if (board & ne) {
+			bishop_blockers[sq][dst] = ne & (arch::blsmsk(board) >> 1);
+			bishop_blockers[dst][sq] = bishop_blockers[sq][dst];
+			bishop_blockers_pure[dst][sq] = bishop_blockers_pure[sq][dst] = bishop_blockers[sq][dst];
+		} else if (board & nw) {
+			bishop_blockers[sq][dst] = nw & (arch::blsmsk(board) >> 1);
+			bishop_blockers[dst][sq] = bishop_blockers[sq][dst];
+			bishop_blockers_pure[dst][sq] = bishop_blockers_pure[sq][dst] = bishop_blockers[sq][dst];
+		}
+	}
+	bishop_blockers[sq][sq] = 0;
 }
 
 // This function is called before main()
 __attribute__((constructor)) void init_movetables() {
-	// Initialize trivial bitboards
+	// Ban illegal sliding piece moves by masking every square by default
+	memset(rook_blockers, 0xff, sizeof(rook_blockers));
+	memset(bishop_blockers, 0xff, sizeof(bishop_blockers));
+	memset(rook_blockers_pure, 0, sizeof(rook_blockers_pure));
+	memset(bishop_blockers_pure, 0, sizeof(bishop_blockers_pure));
+
+	// Init A1 magics
+#ifdef USE_PEXT
+	rook_magics[0].ptr = rook_movetable;
+	bishop_magics[0].ptr = bishop_movetable;
+#endif
+
+	// Initialize elementary bitboards
 	Bitboard rank = 0x00000000000000ff;
 	Bitboard file = 0x0101010101010101;
 	Bitboard diag = 0x8040201008040201;
 	Bitboard anti_diag = 0x0102040810204080;
 	Bitboard piece = square_bits(SQ_A1);
-	for (int i = 0; piece; piece <<= 1, i++) {
+	for (int i = 0; piece != 0; piece <<= 1, i++) {
 		// Knight
 		Bitboard hor1 = ((piece & ~FileHBits) << 1) | ((piece & ~FileABits) >> 1);
 		Bitboard hor2 = ((piece & ~FileHBits & ~FileGBits) << 2) | ((piece & ~FileABits & ~FileBBits) >> 2);
@@ -132,7 +235,12 @@ __attribute__((constructor)) void init_movetables() {
 			mask &= ~FileHBits;
 		if ((i >> 3) != RANK_8)
 			mask &= ~Rank8Bits;
+
 		rook_magics[i].mask = mask;
+#ifndef USE_PEXT
+		rook_magics[i].magic = rook_magics_src[i].magic;
+		rook_magics[i].ptr = sliding_movetable + rook_magics_src[i].offset;
+#endif
 		gen_rook_moves(i, piece);
 
 		// Create mask for bishop
@@ -155,43 +263,65 @@ __attribute__((constructor)) void init_movetables() {
 			mask &= ~FileHBits;
 		if ((i >> 3) != RANK_8)
 			mask &= ~Rank8Bits;
+
 		bishop_magics[i].mask = mask;
+#ifndef USE_PEXT
+		bishop_magics[i].magic = bishop_magics_src[i].magic;
+		bishop_magics[i].ptr = sliding_movetable + bishop_magics_src[i].offset;
+#endif
 		gen_bishop_moves(i, piece);
+	}
+
+	// Generate castling blocker masks
+	for (Square king = SQ_A1; king <= SQ_H1; king++) {
+		for (Square rook = SQ_A1; rook <= SQ_H1; rook++) {
+			if (king == rook)
+				continue;
+			if (king < rook) {
+				castle_blockers[king][rook] = rook_blockers[king][SQ_G1] | rook_blockers[rook][SQ_F1] | square_bits(SQ_F1) | square_bits(SQ_G1);
+				castle_blockers[king][rook] &= ~(square_bits(rook) | square_bits(king));
+				castle_blockers[king + SQ_A8][rook + SQ_A8] = castle_blockers[king][rook] << 56;
+			} else {
+				castle_blockers[king][rook] = rook_blockers[king][SQ_C1] | rook_blockers[rook][SQ_D1] | square_bits(SQ_C1) | square_bits(SQ_D1);
+				castle_blockers[king][rook] &= ~(square_bits(rook) | square_bits(king));
+				castle_blockers[king + SQ_A8][rook + SQ_A8] = castle_blockers[king][rook] << 56;
+			}
+		}
 	}
 }
 
-void white_pawn_moves(const Board &board, pzstd::vector<Move> &moves) {
-	Bitboard pieces = board.piece_boards[PAWN] & board.piece_boards[OCC(WHITE)];
+void white_pawn_moves(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard pieces = pos.piece_boards[PAWN] & pos.piece_boards[OCC(WHITE)];
 	Bitboard dsts;
 	// En passant
-	if (board.ep_square != SQ_NONE) {
-		dsts = ((pieces & ~FileABits & Rank5Bits) << 7) & square_bits(board.ep_square);
+	if (pos.ep_square != SQ_NONE) {
+		dsts = ((pieces & ~FileABits & Rank5Bits) << 7) & square_bits(pos.ep_square);
 		while (dsts) {
-			int sq = _tzcnt_u64(dsts);
+			int sq = arch::tzcnt(dsts);
 			moves.push_back(Move::make<EN_PASSANT>(sq - 7, sq));
-			dsts = _blsr_u64(dsts);
+			dsts = arch::blsr(dsts);
 		}
-		dsts = ((pieces & ~FileHBits & Rank5Bits) << 9) & square_bits(board.ep_square);
+		dsts = ((pieces & ~FileHBits & Rank5Bits) << 9) & square_bits(pos.ep_square);
 		while (dsts) {
-			int sq = _tzcnt_u64(dsts);
+			int sq = arch::tzcnt(dsts);
 			moves.push_back(Move::make<EN_PASSANT>(sq - 9, sq));
-			dsts = _blsr_u64(dsts);
+			dsts = arch::blsr(dsts);
 		}
 	}
 	// Promotion
-	dsts = ((pieces & Rank7Bits) << 8) & ~(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]);
+	dsts = ((pieces & Rank7Bits) << 8) & ~(pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)]);
 	while (dsts) {
-		int sq = _tzcnt_u64(dsts);
+		int sq = arch::tzcnt(dsts);
 		moves.push_back(Move::make<PROMOTION>(sq - 8, sq, QUEEN));
 		moves.push_back(Move::make<PROMOTION>(sq - 8, sq, ROOK));
 		moves.push_back(Move::make<PROMOTION>(sq - 8, sq, KNIGHT));
 		moves.push_back(Move::make<PROMOTION>(sq - 8, sq, BISHOP));
-		dsts = _blsr_u64(dsts);
+		dsts = arch::blsr(dsts);
 	}
 	// Captures
-	dsts = ((pieces & ~FileABits) << 7) & board.piece_boards[OCC(BLACK)];
+	dsts = ((pieces & ~FileABits) << 7) & pos.piece_boards[OCC(BLACK)];
 	while (dsts) {
-		int sq = _tzcnt_u64(dsts);
+		int sq = arch::tzcnt(dsts);
 		if (sq >= SQ_A8) {
 			moves.push_back(Move::make<PROMOTION>(sq - 7, sq, QUEEN));
 			moves.push_back(Move::make<PROMOTION>(sq - 7, sq, ROOK));
@@ -200,11 +330,11 @@ void white_pawn_moves(const Board &board, pzstd::vector<Move> &moves) {
 		} else {
 			moves.push_back(Move(sq - 7, sq));
 		}
-		dsts = _blsr_u64(dsts);
+		dsts = arch::blsr(dsts);
 	}
-	dsts = ((pieces & ~FileHBits) << 9) & board.piece_boards[OCC(BLACK)];
+	dsts = ((pieces & ~FileHBits) << 9) & pos.piece_boards[OCC(BLACK)];
 	while (dsts) {
-		int sq = _tzcnt_u64(dsts);
+		int sq = arch::tzcnt(dsts);
 		if (sq >= SQ_A8) {
 			moves.push_back(Move::make<PROMOTION>(sq - 9, sq, QUEEN));
 			moves.push_back(Move::make<PROMOTION>(sq - 9, sq, ROOK));
@@ -213,57 +343,57 @@ void white_pawn_moves(const Board &board, pzstd::vector<Move> &moves) {
 		} else {
 			moves.push_back(Move(sq - 9, sq));
 		}
-		dsts = _blsr_u64(dsts);
+		dsts = arch::blsr(dsts);
 	}
 	// Normal single pushes (no promotion)
-	dsts = ((pieces & ~Rank7Bits) << 8) & ~(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]);
+	dsts = ((pieces & ~Rank7Bits) << 8) & ~(pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)]);
 	Bitboard tmp = dsts;
 	while (tmp) {
-		int sq = _tzcnt_u64(tmp);
+		int sq = arch::tzcnt(tmp);
 		moves.push_back(Move(sq - 8, sq));
-		tmp = _blsr_u64(tmp);
+		tmp = arch::blsr(tmp);
 	}
 	// Double pushes
-	dsts = ((dsts & Rank3Bits) << 8) & ~(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]);
+	dsts = ((dsts & Rank3Bits) << 8) & ~(pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)]);
 	while (dsts) {
-		int sq = _tzcnt_u64(dsts);
+		int sq = arch::tzcnt(dsts);
 		moves.push_back(Move(sq - 16, sq));
-		dsts = _blsr_u64(dsts);
+		dsts = arch::blsr(dsts);
 	}
 }
 
-void black_pawn_moves(const Board &board, pzstd::vector<Move> &moves) {
-	Bitboard pieces = board.piece_boards[PAWN] & board.piece_boards[OCC(BLACK)];
+void black_pawn_moves(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard pieces = pos.piece_boards[PAWN] & pos.piece_boards[OCC(BLACK)];
 	Bitboard dsts;
 	// En passant
-	if (board.ep_square != SQ_NONE) {
-		dsts = ((pieces & ~FileHBits & Rank4Bits) >> 7) & square_bits(board.ep_square);
+	if (pos.ep_square != SQ_NONE) {
+		dsts = ((pieces & ~FileHBits & Rank4Bits) >> 7) & square_bits(pos.ep_square);
 		while (dsts) {
-			int sq = _tzcnt_u64(dsts);
+			int sq = arch::tzcnt(dsts);
 			moves.push_back(Move::make<EN_PASSANT>(sq + 7, sq));
-			dsts = _blsr_u64(dsts);
+			dsts = arch::blsr(dsts);
 		}
-		dsts = ((pieces & ~FileABits & Rank4Bits) >> 9) & square_bits(board.ep_square);
+		dsts = ((pieces & ~FileABits & Rank4Bits) >> 9) & square_bits(pos.ep_square);
 		while (dsts) {
-			int sq = _tzcnt_u64(dsts);
+			int sq = arch::tzcnt(dsts);
 			moves.push_back(Move::make<EN_PASSANT>(sq + 9, sq));
-			dsts = _blsr_u64(dsts);
+			dsts = arch::blsr(dsts);
 		}
 	}
 	// Promotion
-	dsts = ((pieces & Rank2Bits) >> 8) & ~(board.piece_boards[OCC(BLACK)] | board.piece_boards[OCC(WHITE)]);
+	dsts = ((pieces & Rank2Bits) >> 8) & ~(pos.piece_boards[OCC(BLACK)] | pos.piece_boards[OCC(WHITE)]);
 	while (dsts) {
-		int sq = _tzcnt_u64(dsts);
+		int sq = arch::tzcnt(dsts);
 		moves.push_back(Move::make<PROMOTION>(sq + 8, sq, QUEEN));
 		moves.push_back(Move::make<PROMOTION>(sq + 8, sq, ROOK));
 		moves.push_back(Move::make<PROMOTION>(sq + 8, sq, KNIGHT));
 		moves.push_back(Move::make<PROMOTION>(sq + 8, sq, BISHOP));
-		dsts = _blsr_u64(dsts);
+		dsts = arch::blsr(dsts);
 	}
 	// Captures
-	dsts = ((pieces & ~FileHBits) >> 7) & board.piece_boards[OCC(WHITE)];
+	dsts = ((pieces & ~FileHBits) >> 7) & pos.piece_boards[OCC(WHITE)];
 	while (dsts) {
-		int sq = _tzcnt_u64(dsts);
+		int sq = arch::tzcnt(dsts);
 		if (sq <= SQ_H1) {
 			moves.push_back(Move::make<PROMOTION>(sq + 7, sq, QUEEN));
 			moves.push_back(Move::make<PROMOTION>(sq + 7, sq, ROOK));
@@ -272,11 +402,11 @@ void black_pawn_moves(const Board &board, pzstd::vector<Move> &moves) {
 		} else {
 			moves.push_back(Move(sq + 7, sq));
 		}
-		dsts = _blsr_u64(dsts);
+		dsts = arch::blsr(dsts);
 	}
-	dsts = ((pieces & ~FileABits) >> 9) & board.piece_boards[OCC(WHITE)];
+	dsts = ((pieces & ~FileABits) >> 9) & pos.piece_boards[OCC(WHITE)];
 	while (dsts) {
-		int sq = _tzcnt_u64(dsts);
+		int sq = arch::tzcnt(dsts);
 		if (sq <= SQ_H1) {
 			moves.push_back(Move::make<PROMOTION>(sq + 9, sq, QUEEN));
 			moves.push_back(Move::make<PROMOTION>(sq + 9, sq, ROOK));
@@ -285,115 +415,137 @@ void black_pawn_moves(const Board &board, pzstd::vector<Move> &moves) {
 		} else {
 			moves.push_back(Move(sq + 9, sq));
 		}
-		dsts = _blsr_u64(dsts);
+		dsts = arch::blsr(dsts);
 	}
 	// Normal single pushes (no promotion)
-	dsts = ((pieces & ~Rank2Bits) >> 8) & ~(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]);
+	dsts = ((pieces & ~Rank2Bits) >> 8) & ~(pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)]);
 	Bitboard tmp = dsts;
 	while (tmp) {
-		int sq = _tzcnt_u64(tmp);
+		int sq = arch::tzcnt(tmp);
 		moves.push_back(Move(sq + 8, sq));
-		tmp = _blsr_u64(tmp);
+		tmp = arch::blsr(tmp);
 	}
 	// Double pushes
-	dsts = ((dsts & Rank6Bits) >> 8) & ~(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]);
+	dsts = ((dsts & Rank6Bits) >> 8) & ~(pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)]);
 	while (dsts) {
-		int sq = _tzcnt_u64(dsts);
+		int sq = arch::tzcnt(dsts);
 		moves.push_back(Move(sq + 16, sq));
-		dsts = _blsr_u64(dsts);
+		dsts = arch::blsr(dsts);
 	}
 }
 
-void pawn_moves(const Board &board, pzstd::vector<Move> &moves) {
-	if (board.side == WHITE) {
-		white_pawn_moves(board, moves);
+void pawn_moves(const Position &pos, pzstd::vector<Move> &moves) {
+	if (pos.side == WHITE) {
+		white_pawn_moves(pos, moves);
 	} else {
-		black_pawn_moves(board, moves);
+		black_pawn_moves(pos, moves);
 	}
 }
 
-void knight_moves(const Board &board, pzstd::vector<Move> &moves) {
-	Bitboard pieces = board.piece_boards[KNIGHT] & board.piece_boards[OCC(board.side)];
+void knight_moves(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard pieces = pos.piece_boards[KNIGHT] & pos.piece_boards[OCC(pos.side)];
 	while (pieces) {
-		int sq = _tzcnt_u64(pieces);
-		Bitboard dsts = knight_movetable[sq] & ~board.piece_boards[OCC(board.side)];
+		int sq = arch::tzcnt(pieces);
+		Bitboard dsts = knight_movetable[sq] & ~pos.piece_boards[OCC(pos.side)];
 		while (dsts) {
-			int dst = _tzcnt_u64(dsts);
+			int dst = arch::tzcnt(dsts);
 			moves.push_back(Move(sq, dst));
-			dsts = _blsr_u64(dsts);
+			dsts = arch::blsr(dsts);
 		}
-		pieces = _blsr_u64(pieces);
+		pieces = arch::blsr(pieces);
 	}
 }
 
-void bishop_moves(const Board &board, pzstd::vector<Move> &moves) {
-	Bitboard pieces = (board.piece_boards[BISHOP] | board.piece_boards[QUEEN]) & board.piece_boards[OCC(board.side)];
+void bishop_moves(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard pieces = (pos.piece_boards[BISHOP] | pos.piece_boards[QUEEN]) & pos.piece_boards[OCC(pos.side)];
 	while (pieces) {
-		int sq = _tzcnt_u64(pieces);
-		uint32_t idx = bishop_magics[sq].offset + _pext_u64(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)], bishop_magics[sq].mask);
-		Bitboard dsts = bishop_movetable[idx] & ~board.piece_boards[OCC(board.side)];
+		int sq = arch::tzcnt(pieces);
+		Bitboard occ = pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)];
+		Bitboard dsts = bishop_attacks(Square(sq), occ) & ~pos.piece_boards[OCC(pos.side)];
 		while (dsts) {
-			int dst = _tzcnt_u64(dsts);
+			int dst = arch::tzcnt(dsts);
 			moves.push_back(Move(sq, dst));
-			dsts = _blsr_u64(dsts);
+			dsts = arch::blsr(dsts);
 		}
-		pieces = _blsr_u64(pieces);
+		pieces = arch::blsr(pieces);
 	}
 }
 
-void rook_moves(const Board &board, pzstd::vector<Move> &moves) {
-	Bitboard pieces = (board.piece_boards[ROOK] | board.piece_boards[QUEEN]) & board.piece_boards[OCC(board.side)];
+void rook_moves(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard pieces = (pos.piece_boards[ROOK] | pos.piece_boards[QUEEN]) & pos.piece_boards[OCC(pos.side)];
 	while (pieces) {
-		int sq = _tzcnt_u64(pieces);
-		uint32_t idx = rook_magics[sq].offset + _pext_u64(board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)], rook_magics[sq].mask);
-		Bitboard dsts = rook_movetable[idx] & ~board.piece_boards[OCC(board.side)];
+		int sq = arch::tzcnt(pieces);
+		Bitboard occ = pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)];
+		Bitboard dsts = rook_attacks(Square(sq), occ) & ~pos.piece_boards[OCC(pos.side)];
 		while (dsts) {
-			int dst = _tzcnt_u64(dsts);
+			int dst = arch::tzcnt(dsts);
 			moves.push_back(Move(sq, dst));
-			dsts = _blsr_u64(dsts);
+			dsts = arch::blsr(dsts);
 		}
-		pieces = _blsr_u64(pieces);
+		pieces = arch::blsr(pieces);
 	}
 }
 
-void king_moves(const Board &board, pzstd::vector<Move> &moves) {
-	Bitboard piece = board.piece_boards[KING] & board.piece_boards[OCC(board.side)];
+void king_moves(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard piece = pos.piece_boards[KING] & pos.piece_boards[OCC(pos.side)];
 	if (__builtin_expect(piece == 0, false))
 		return;
-	int sq = _tzcnt_u64(piece);
+	int sq = arch::tzcnt(piece);
 	// Castling
-	if (board.side == WHITE && !board.control(SQ_E1).second) {
-		if (board.castling & WHITE_OO) {
-			if (!((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & (square_bits(SQ_F1) | square_bits(SQ_G1))) &&
-				!board.control(SQ_F1).second)
-				moves.push_back(Move::make<CASTLING>(SQ_E1, SQ_G1));
+	Bitboard occs = pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)];
+	if (pos.side == WHITE && !pos.control(sq, BLACK)) {
+		if (pos.castling & WHITE_OO) {
+			if (castle_blockers[sq][pos.rook_pos[0]] & occs)
+				goto skip_white_oo;
+			if (pos.side_control[BLACK] & (rook_blockers[sq][SQ_G1] | square_bits(SQ_G1) | piece))
+				goto skip_white_oo;
+			if (pos.pinned[WHITE] & square_bits(pos.rook_pos[0]))
+				goto skip_white_oo;
+			moves.push_back(Move::make<CASTLING>(sq, pos.rook_pos[0]));
 		}
-		if (board.castling & WHITE_OOO) {
-			if (!((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & (square_bits(SQ_D1) | square_bits(SQ_C1) | square_bits(SQ_B1))) &&
-				!board.control(SQ_D1).second)
-				moves.push_back(Move::make<CASTLING>(SQ_E1, SQ_C1));
+	skip_white_oo:
+		if (pos.castling & WHITE_OOO) {
+			if (castle_blockers[sq][pos.rook_pos[1]] & occs)
+				goto skip_white_ooo;
+			if (pos.side_control[BLACK] & (rook_blockers[sq][SQ_C1] | square_bits(SQ_C1) | piece))
+				goto skip_white_ooo;
+			if (pos.pinned[WHITE] & square_bits(pos.rook_pos[1]))
+				goto skip_white_ooo;
+			moves.push_back(Move::make<CASTLING>(sq, pos.rook_pos[1]));
 		}
-	} else if (board.side == BLACK && !board.control(SQ_E8).first) {
-		if (board.castling & BLACK_OO) {
-			if (!((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & (square_bits(SQ_F8) | square_bits(SQ_G8))) && !board.control(SQ_F8).first)
-				moves.push_back(Move::make<CASTLING>(SQ_E8, SQ_G8));
+	skip_white_ooo:;
+	} else if (pos.side == BLACK && !pos.control(sq, WHITE)) {
+		if (pos.castling & BLACK_OO) {
+			if (castle_blockers[sq][pos.rook_pos[2]] & occs)
+				goto skip_black_oo;
+			if (pos.side_control[WHITE] & (rook_blockers[sq][SQ_G8] | square_bits(SQ_G8) | piece))
+				goto skip_black_oo;
+			if (pos.pinned[BLACK] & square_bits(pos.rook_pos[2]))
+				goto skip_black_oo;
+			moves.push_back(Move::make<CASTLING>(sq, pos.rook_pos[2]));
 		}
-		if (board.castling & BLACK_OOO) {
-			if (!((board.piece_boards[OCC(WHITE)] | board.piece_boards[OCC(BLACK)]) & (square_bits(SQ_D8) | square_bits(SQ_C8) | square_bits(SQ_B8))) &&
-				!board.control(SQ_D8).first)
-				moves.push_back(Move::make<CASTLING>(SQ_E8, SQ_C8));
+	skip_black_oo:
+		if (pos.castling & BLACK_OOO) {
+			if (castle_blockers[sq][pos.rook_pos[3]] & occs)
+				goto skip_black_ooo;
+			if (pos.side_control[WHITE] & (rook_blockers[sq][SQ_C8] | square_bits(SQ_C8) | piece))
+				goto skip_black_ooo;
+			if (pos.pinned[BLACK] & square_bits(pos.rook_pos[3]))
+				goto skip_black_ooo;
+			moves.push_back(Move::make<CASTLING>(sq, pos.rook_pos[3]));
 		}
+	skip_black_ooo:;
 	}
 	// Normal moves
-	Bitboard dsts = king_movetable[sq] & ~board.piece_boards[OCC(board.side)];
+	Bitboard dsts = king_movetable[sq] & ~pos.piece_boards[OCC(pos.side)];
 	while (dsts) {
-		int dst = _tzcnt_u64(dsts);
+		int dst = arch::tzcnt(dsts);
 		moves.push_back(Move(sq, dst));
-		dsts = _blsr_u64(dsts);
+		dsts = arch::blsr(dsts);
 	}
 }
 
-void Board::legal_moves(pzstd::vector<Move> &moves) const {
+void Position::pseudolegal_moves(pzstd::vector<Move> &moves) const {
 	rook_moves(*this, moves);
 	bishop_moves(*this, moves);
 	knight_moves(*this, moves);
@@ -401,120 +553,172 @@ void Board::legal_moves(pzstd::vector<Move> &moves) const {
 	king_moves(*this, moves);
 }
 
-std::pair<int, int> Board::control(int sq) const {
-	int white = 0;
-	int black = 0;
-
-	uint32_t idx = rook_magics[sq].offset + _pext_u64(piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)], rook_magics[sq].mask);
-	white += _mm_popcnt_u64(rook_movetable[idx] & (piece_boards[ROOK] | piece_boards[QUEEN]) & piece_boards[OCC(WHITE)]);
-	black += _mm_popcnt_u64(rook_movetable[idx] & (piece_boards[ROOK] | piece_boards[QUEEN]) & piece_boards[OCC(BLACK)]);
-
-	idx = bishop_magics[sq].offset + _pext_u64(piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)], bishop_magics[sq].mask);
-	white += _mm_popcnt_u64(bishop_movetable[idx] & (piece_boards[BISHOP] | piece_boards[QUEEN]) & piece_boards[OCC(WHITE)]);
-	black += _mm_popcnt_u64(bishop_movetable[idx] & (piece_boards[BISHOP] | piece_boards[QUEEN]) & piece_boards[OCC(BLACK)]);
-
-	white += _mm_popcnt_u64(knight_movetable[sq] & piece_boards[KNIGHT] & piece_boards[OCC(WHITE)]);
-	black += _mm_popcnt_u64(knight_movetable[sq] & piece_boards[KNIGHT] & piece_boards[OCC(BLACK)]);
-
-	white += _mm_popcnt_u64(
-		((square_bits(Square(sq - 9)) & 0x7f7f7f7f7f7f7f7f) | (square_bits(Square(sq - 7)) & 0xfefefefefefefefe)) & piece_boards[PAWN] &
-		piece_boards[OCC(WHITE)]
-	);
-	black += _mm_popcnt_u64(
-		((square_bits(Square(sq + 9)) & 0xfefefefefefefefe) | (square_bits(Square(sq + 7)) & 0x7f7f7f7f7f7f7f7f)) & piece_boards[PAWN] &
-		piece_boards[OCC(BLACK)]
-	);
-
-	white += _mm_popcnt_u64(king_movetable[sq] & piece_boards[KING] & piece_boards[OCC(WHITE)]);
-	black += _mm_popcnt_u64(king_movetable[sq] & piece_boards[KING] & piece_boards[OCC(BLACK)]);
-
-	return {white, black};
+void pawn_captures(const Position &pos, pzstd::vector<Move> &moves) {
+	if (pos.side == WHITE) {
+		Bitboard pieces = pos.piece_boards[PAWN] & pos.piece_boards[OCC(WHITE)];
+		// Promotion
+		Bitboard dsts = ((pieces & Rank7Bits) << 8) & ~(pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)]);
+		while (dsts) {
+			int sq = arch::tzcnt(dsts);
+			moves.push_back(Move::make<PROMOTION>(sq - 8, sq, QUEEN));
+			dsts = arch::blsr(dsts);
+		}
+		// Captures
+		dsts = ((pieces & ~FileABits) << 7) & pos.piece_boards[OCC(BLACK)];
+		while (dsts) {
+			int sq = arch::tzcnt(dsts);
+			if (sq >= SQ_A8) {
+				moves.push_back(Move::make<PROMOTION>(sq - 7, sq, QUEEN));
+				moves.push_back(Move::make<PROMOTION>(sq - 7, sq, ROOK));
+				moves.push_back(Move::make<PROMOTION>(sq - 7, sq, KNIGHT));
+				moves.push_back(Move::make<PROMOTION>(sq - 7, sq, BISHOP));
+			} else {
+				moves.push_back(Move(sq - 7, sq));
+			}
+			dsts = arch::blsr(dsts);
+		}
+		dsts = ((pieces & ~FileHBits) << 9) & pos.piece_boards[OCC(BLACK)];
+		while (dsts) {
+			int sq = arch::tzcnt(dsts);
+			if (sq >= SQ_A8) {
+				moves.push_back(Move::make<PROMOTION>(sq - 9, sq, QUEEN));
+				moves.push_back(Move::make<PROMOTION>(sq - 9, sq, ROOK));
+				moves.push_back(Move::make<PROMOTION>(sq - 9, sq, KNIGHT));
+				moves.push_back(Move::make<PROMOTION>(sq - 9, sq, BISHOP));
+			} else {
+				moves.push_back(Move(sq - 9, sq));
+			}
+			dsts = arch::blsr(dsts);
+		}
+	} else {
+		Bitboard pieces = pos.piece_boards[PAWN] & pos.piece_boards[OCC(BLACK)];
+		// Promotion
+		Bitboard dsts = ((pieces & Rank2Bits) >> 8) & ~(pos.piece_boards[OCC(BLACK)] | pos.piece_boards[OCC(WHITE)]);
+		while (dsts) {
+			int sq = arch::tzcnt(dsts);
+			moves.push_back(Move::make<PROMOTION>(sq + 8, sq, QUEEN));
+			dsts = arch::blsr(dsts);
+		}
+		// Captures
+		dsts = ((pieces & ~FileHBits) >> 7) & pos.piece_boards[OCC(WHITE)];
+		while (dsts) {
+			int sq = arch::tzcnt(dsts);
+			if (sq <= SQ_H1) {
+				moves.push_back(Move::make<PROMOTION>(sq + 7, sq, QUEEN));
+				moves.push_back(Move::make<PROMOTION>(sq + 7, sq, ROOK));
+				moves.push_back(Move::make<PROMOTION>(sq + 7, sq, KNIGHT));
+				moves.push_back(Move::make<PROMOTION>(sq + 7, sq, BISHOP));
+			} else {
+				moves.push_back(Move(sq + 7, sq));
+			}
+			dsts = arch::blsr(dsts);
+		}
+		dsts = ((pieces & ~FileABits) >> 9) & pos.piece_boards[OCC(WHITE)];
+		while (dsts) {
+			int sq = arch::tzcnt(dsts);
+			if (sq <= SQ_H1) {
+				moves.push_back(Move::make<PROMOTION>(sq + 9, sq, QUEEN));
+				moves.push_back(Move::make<PROMOTION>(sq + 9, sq, ROOK));
+				moves.push_back(Move::make<PROMOTION>(sq + 9, sq, KNIGHT));
+				moves.push_back(Move::make<PROMOTION>(sq + 9, sq, BISHOP));
+			} else {
+				moves.push_back(Move(sq + 9, sq));
+			}
+			dsts = arch::blsr(dsts);
+		}
+	}
 }
 
-Value Board::see(Square sq) {
-	Value val = 0;
-
-	Bitboard tmp;
-	PieceType atk = NO_PIECETYPE; // Get the least valuable attacker
-	Square atksq = SQ_NONE; // Get the square of the attacker
-	uint32_t idx;
-
-	if (side == WHITE)
-		tmp = ((square_bits(Square(sq - 9)) & 0x7f7f7f7f7f7f7f7f) | (square_bits(Square(sq - 7)) & 0xfefefefefefefefe)) & piece_boards[PAWN] & piece_boards[OCC(WHITE)];
-	else
-		tmp = ((square_bits(Square(sq + 7)) & 0x7f7f7f7f7f7f7f7f) | (square_bits(Square(sq + 9)) & 0xfefefefefefefefe)) & piece_boards[PAWN] & piece_boards[OCC(WHITE)];
-	if (tmp) {
-		atk = PAWN;
-		atksq = Square(__tzcnt_u64(tmp));
-		goto found;
+void knight_captures(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard pieces = pos.piece_boards[KNIGHT] & pos.piece_boards[OCC(pos.side)];
+	while (pieces) {
+		int sq = arch::tzcnt(pieces);
+		Bitboard dsts = knight_movetable[sq] & pos.piece_boards[OPPOCC(pos.side)];
+		while (dsts) {
+			int dst = arch::tzcnt(dsts);
+			moves.push_back(Move(sq, dst));
+			dsts = arch::blsr(dsts);
+		}
+		pieces = arch::blsr(pieces);
 	}
-
-	tmp = knight_movetable[sq] & piece_boards[KNIGHT] & piece_boards[OCC(side)];
-	if (tmp) {
-		atk = KNIGHT;
-		atksq = Square(__tzcnt_u64(tmp));
-		goto found;
-	}
-
-	idx = bishop_magics[sq].offset + _pext_u64(piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)], bishop_magics[sq].mask);
-	tmp = bishop_movetable[idx] & piece_boards[BISHOP] & piece_boards[OCC(side)];
-	if (tmp) {
-		atk = BISHOP;
-		atksq = Square(__tzcnt_u64(tmp));
-		goto found;
-	}
-
-	idx = rook_magics[sq].offset + _pext_u64(piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)], rook_magics[sq].mask);
-	tmp = rook_movetable[idx] & piece_boards[ROOK] & piece_boards[OCC(side)];
-	if (tmp) {
-		atk = ROOK;
-		atksq = Square(__tzcnt_u64(tmp));
-		goto found;
-	}
-
-	idx = bishop_magics[sq].offset + _pext_u64(piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)], bishop_magics[sq].mask);
-	tmp = bishop_movetable[idx] & piece_boards[QUEEN] & piece_boards[OCC(side)];
-	idx = rook_magics[sq].offset + _pext_u64(piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)], rook_magics[sq].mask);
-	tmp |= rook_movetable[idx] & piece_boards[QUEEN] & piece_boards[OCC(side)];
-	if (tmp) {
-		atk = QUEEN;
-		atksq = Square(__tzcnt_u64(tmp));
-		goto found;
-	}
-
-found:
-	if (atk != NO_PIECETYPE) {
-		make_move(Move::make<MoveType::NORMAL>(atksq, sq));
-		val = std::max(0, PieceValue[atk & 7] - see(sq));
-		unmake_move();
-	}
-	return val;
 }
 
-Value Board::see_capture(Move move) {
-	Value val = 0;
-	PieceType victim = PieceType(mailbox[move.dst()] & 7);
-	make_move(move);
-	val = PieceValue[victim] - see(move.src());
-	unmake_move();
-	return val;
+void bishop_captures(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard pieces = (pos.piece_boards[BISHOP] | pos.piece_boards[QUEEN]) & pos.piece_boards[OCC(pos.side)];
+	while (pieces) {
+		int sq = arch::tzcnt(pieces);
+		Bitboard occ = pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)];
+		Bitboard dsts = bishop_attacks(Square(sq), occ) & pos.piece_boards[OPPOCC(pos.side)];
+		while (dsts) {
+			int dst = arch::tzcnt(dsts);
+			moves.push_back(Move(sq, dst));
+			dsts = arch::blsr(dsts);
+		}
+		pieces = arch::blsr(pieces);
+	}
+}
+
+void rook_captures(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard pieces = (pos.piece_boards[ROOK] | pos.piece_boards[QUEEN]) & pos.piece_boards[OCC(pos.side)];
+	while (pieces) {
+		int sq = arch::tzcnt(pieces);
+		Bitboard occ = pos.piece_boards[OCC(WHITE)] | pos.piece_boards[OCC(BLACK)];
+		Bitboard dsts = rook_attacks(Square(sq), occ) & pos.piece_boards[OPPOCC(pos.side)];
+		while (dsts) {
+			int dst = arch::tzcnt(dsts);
+			moves.push_back(Move(sq, dst));
+			dsts = arch::blsr(dsts);
+		}
+		pieces = arch::blsr(pieces);
+	}
+}
+
+void king_captures(const Position &pos, pzstd::vector<Move> &moves) {
+	Bitboard piece = pos.piece_boards[KING] & pos.piece_boards[OCC(pos.side)];
+	if (__builtin_expect(piece == 0, false))
+		return;
+	int sq = arch::tzcnt(piece);
+	Bitboard dsts = king_movetable[sq] & pos.piece_boards[OPPOCC(pos.side)];
+	while (dsts) {
+		int dst = arch::tzcnt(dsts);
+		moves.push_back(Move(sq, dst));
+		dsts = arch::blsr(dsts);
+	}
+}
+
+void Position::captures(pzstd::vector<Move> &moves) const {
+	rook_captures(*this, moves);
+	bishop_captures(*this, moves);
+	knight_captures(*this, moves);
+	pawn_captures(*this, moves);
+	king_captures(*this, moves);
 }
 
 Bitboard rook_attacks(Square sq, Bitboard occ) {
-	uint32_t idx = rook_magics[sq].offset + _pext_u64(occ, rook_magics[sq].mask);
-	return rook_movetable[idx];
+#ifdef USE_PEXT
+	uint64_t idx = arch::pext(occ, rook_magics[sq].mask);
+#else
+	uint64_t idx = occ | rook_magics[sq].mask;
+	idx *= rook_magics[sq].magic;
+	idx >>= 64 - 12;
+#endif
+	return rook_magics[sq].ptr[idx];
 }
 
 Bitboard bishop_attacks(Square sq, Bitboard occ) {
-	uint32_t idx = bishop_magics[sq].offset + _pext_u64(occ, bishop_magics[sq].mask);
-	return bishop_movetable[idx];
+#ifdef USE_PEXT
+	uint32_t idx = arch::pext(occ, bishop_magics[sq].mask);
+#else
+	uint64_t idx = occ | bishop_magics[sq].mask;
+	idx *= bishop_magics[sq].magic;
+	idx >>= 64 - 9;
+#endif
+	return bishop_magics[sq].ptr[idx];
 }
 
 Bitboard queen_attacks(Square sq, Bitboard occ) {
-	uint32_t idx = rook_magics[sq].offset + _pext_u64(occ, rook_magics[sq].mask);
-	Bitboard rook = rook_movetable[idx];
-	idx = bishop_magics[sq].offset + _pext_u64(occ, bishop_magics[sq].mask);
-	Bitboard bishop = bishop_movetable[idx];
+	Bitboard rook = rook_attacks(sq, occ);
+	Bitboard bishop = bishop_attacks(sq, occ);
 	return rook | bishop;
 }
 
@@ -530,5 +734,418 @@ Bitboard pawn_attacks(Square sq, bool color) {
 	if (color == WHITE)
 		return ((square_bits(Square(sq + 7)) & 0x7f7f7f7f7f7f7f7f) | (square_bits(Square(sq + 9)) & 0xfefefefefefefefe));
 	else
-		return ((square_bits(Square(sq - 7)) & 0x7f7f7f7f7f7f7f7f) | (square_bits(Square(sq - 9)) & 0xfefefefefefefefe));
+		return ((square_bits(Square(sq - 7)) & 0xfefefefefefefefe) | (square_bits(Square(sq - 9)) & 0x7f7f7f7f7f7f7f7f));
+}
+
+void Position::update_control() {
+	memset(side_control, 0, sizeof(side_control));
+	memset(pinned, 0, sizeof(pinned));
+	memset(pinners, 0, sizeof(pinners));
+	memset(checkers, 0, sizeof(checkers));
+
+	Bitboard occ = piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)];
+
+	Bitboard w_king = piece_boards[KING] & piece_boards[OCC(WHITE)];
+	Bitboard b_king = piece_boards[KING] & piece_boards[OCC(BLACK)];
+	Square w_king_sq = (Square)arch::tzcnt(w_king);
+	Square b_king_sq = (Square)arch::tzcnt(b_king);
+
+	// Rooks
+	Bitboard pieces = piece_boards[ROOK] | piece_boards[QUEEN];
+	Bitboard white = pieces & piece_boards[OCC(WHITE)];
+	Bitboard black = pieces & piece_boards[OCC(BLACK)];
+	while (white) {
+		Square sq = (Square)arch::tzcnt(white);
+		Bitboard control = rook_attacks(sq, occ ^ b_king);
+		side_control[WHITE] |= control;
+		white = arch::blsr(white);
+
+		if (arch::popcnt(rook_blockers_pure[sq][b_king_sq] & occ) == 1) {
+			pinned[BLACK] |= rook_blockers_pure[sq][b_king_sq] & piece_boards[OCC(BLACK)];
+			pinners[BLACK] |= square_bits(sq);
+		}
+
+		if (control & b_king)
+			checkers[BLACK] |= square_bits(sq);
+	}
+	while (black) {
+		Square sq = (Square)arch::tzcnt(black);
+		Bitboard control = rook_attacks(sq, occ ^ w_king);
+		side_control[BLACK] |= control;
+		black = arch::blsr(black);
+
+		if (arch::popcnt(rook_blockers_pure[sq][w_king_sq] & occ) == 1) {
+			pinned[WHITE] |= rook_blockers_pure[sq][w_king_sq] & piece_boards[OCC(WHITE)];
+			pinners[WHITE] |= square_bits(sq);
+		}
+
+		if (control & w_king)
+			checkers[WHITE] |= square_bits(sq);
+	}
+
+	// Bishops
+	pieces = piece_boards[BISHOP] | piece_boards[QUEEN];
+	white = pieces & piece_boards[OCC(WHITE)];
+	black = pieces & piece_boards[OCC(BLACK)];
+	while (white) {
+		Square sq = (Square)arch::tzcnt(white);
+		Bitboard control = bishop_attacks(sq, occ ^ b_king);
+		side_control[WHITE] |= control;
+		white = arch::blsr(white);
+
+		if (arch::popcnt(bishop_blockers_pure[sq][b_king_sq] & occ) == 1) {
+			pinned[BLACK] |= bishop_blockers_pure[sq][b_king_sq] & piece_boards[OCC(BLACK)];
+			pinners[BLACK] |= square_bits(sq);
+		}
+
+		if (control & b_king)
+			checkers[BLACK] |= square_bits(sq);
+	}
+	while (black) {
+		Square sq = (Square)arch::tzcnt(black);
+		Bitboard control = bishop_attacks(sq, occ ^ w_king);
+		side_control[BLACK] |= control;
+		black = arch::blsr(black);
+
+		if (arch::popcnt(bishop_blockers_pure[sq][w_king_sq] & occ) == 1) {
+			pinned[WHITE] |= bishop_blockers_pure[sq][w_king_sq] & piece_boards[OCC(WHITE)];
+			pinners[WHITE] |= square_bits(sq);
+		}
+
+		if (control & w_king)
+			checkers[WHITE] |= square_bits(sq);
+	}
+
+	// Knights
+	pieces = piece_boards[KNIGHT];
+	white = pieces & piece_boards[OCC(WHITE)];
+	black = pieces & piece_boards[OCC(BLACK)];
+	{
+		Bitboard hor1 = ((white & ~FileHBits) << 1) | ((white & ~FileABits) >> 1);
+		Bitboard hor2 = ((white & ~FileHBits & ~FileGBits) << 2) | ((white & ~FileABits & ~FileBBits) >> 2);
+		Bitboard control = (hor1 << 16) | (hor1 >> 16) | (hor2 << 8) | (hor2 >> 8);
+		side_control[WHITE] |= control;
+
+		checkers[BLACK] |= knight_movetable[b_king_sq] & white;
+	}
+	{
+		Bitboard hor1 = ((black & ~FileHBits) << 1) | ((black & ~FileABits) >> 1);
+		Bitboard hor2 = ((black & ~FileHBits & ~FileGBits) << 2) | ((black & ~FileABits & ~FileBBits) >> 2);
+		Bitboard control = (hor1 << 16) | (hor1 >> 16) | (hor2 << 8) | (hor2 >> 8);
+		side_control[BLACK] |= control;
+
+		checkers[WHITE] |= knight_movetable[w_king_sq] & black;
+	}
+
+	// Pawns
+	pieces = piece_boards[PAWN];
+	white = pieces & piece_boards[OCC(WHITE)];
+	black = pieces & piece_boards[OCC(BLACK)];
+	{
+		Bitboard control = ((white & ~FileABits) << 7) | ((white & ~FileHBits) << 9);
+		side_control[WHITE] |= control;
+
+		checkers[BLACK] |= pawn_attacks(b_king_sq, BLACK) & white;
+	}
+	{
+		Bitboard control = ((black & ~FileHBits) >> 7) | ((black & ~FileABits) >> 9);
+		side_control[BLACK] |= control;
+
+		checkers[WHITE] |= pawn_attacks(w_king_sq, WHITE) & black;
+	}
+
+	// Kings
+	pieces = piece_boards[KING];
+	white = pieces & piece_boards[OCC(WHITE)];
+	black = pieces & piece_boards[OCC(BLACK)];
+	{
+		Bitboard control = white | ((white & ~FileHBits) << 1) | ((white & ~FileABits) >> 1);
+		control |= (control << 8) | (control >> 8);
+		side_control[WHITE] |= control;
+	}
+	{
+		Bitboard control = black | ((black & ~FileHBits) << 1) | ((black & ~FileABits) >> 1);
+		control |= (control << 8) | (control >> 8);
+		side_control[BLACK] |= control;
+	}
+}
+
+bool Position::control(int sq, bool side) const {
+	return side_control[side] & square_bits((Square)sq);
+}
+
+Bitboard Position::lva_(Square sq, int side, PieceType &p, Bitboard occ) const {
+	if (side == WHITE) {
+		Bitboard pawn = pawn_attacks(sq, BLACK) & piece_boards[PAWN] & piece_boards[OCC(WHITE)] & occ;
+		if (pawn) {
+			p = PAWN;
+			return pawn & -pawn;
+		}
+		Bitboard knight = knight_attacks(sq) & piece_boards[KNIGHT] & piece_boards[OCC(WHITE)] & occ;
+		if (knight) {
+			p = KNIGHT;
+			return knight & -knight;
+		}
+		Bitboard bishop = bishop_attacks(sq, occ) & piece_boards[BISHOP] & piece_boards[OCC(WHITE)] & occ;
+		if (bishop) {
+			p = BISHOP;
+			return bishop & -bishop;
+		}
+		Bitboard rook = rook_attacks(sq, occ) & piece_boards[ROOK] & piece_boards[OCC(WHITE)] & occ;
+		if (rook) {
+			p = ROOK;
+			return rook & -rook;
+		}
+		Bitboard queen = queen_attacks(sq, occ) & piece_boards[QUEEN] & piece_boards[OCC(WHITE)] & occ;
+		if (queen) {
+			p = QUEEN;
+			return queen & -queen;
+		}
+		Bitboard king = king_attacks(sq) & piece_boards[KING] & piece_boards[OCC(WHITE)] & occ;
+		if (king) {
+			p = KING;
+			return king;
+		}
+	} else {
+		Bitboard pawn = pawn_attacks(sq, WHITE) & piece_boards[PAWN] & piece_boards[OCC(BLACK)] & occ;
+		if (pawn) {
+			p = PAWN;
+			return pawn & -pawn;
+		}
+		Bitboard knight = knight_attacks(sq) & piece_boards[KNIGHT] & piece_boards[OCC(BLACK)] & occ;
+		if (knight) {
+			p = KNIGHT;
+			return knight & -knight;
+		}
+		Bitboard bishop = bishop_attacks(sq, occ) & piece_boards[BISHOP] & piece_boards[OCC(BLACK)] & occ;
+		if (bishop) {
+			p = BISHOP;
+			return bishop & -bishop;
+		}
+		Bitboard rook = rook_attacks(sq, occ) & piece_boards[ROOK] & piece_boards[OCC(BLACK)] & occ;
+		if (rook) {
+			p = ROOK;
+			return rook & -rook;
+		}
+		Bitboard queen = queen_attacks(sq, occ) & piece_boards[QUEEN] & piece_boards[OCC(BLACK)] & occ;
+		if (queen) {
+			p = QUEEN;
+			return queen & -queen;
+		}
+		Bitboard king = king_attacks(sq) & piece_boards[KING] & piece_boards[OCC(BLACK)] & occ;
+		if (king) {
+			p = KING;
+			return king;
+		}
+	}
+	p = NO_PIECETYPE;
+	return 0;
+}
+
+int gain_(Position &pos, Move &move) {
+	if (move.type() == CASTLING) return 0;
+	if (move.type() == EN_PASSANT) return PawnValue;
+
+	int value = PieceValue[pos.mailbox[move.dst()] & 7];
+	if (move.type() == PROMOTION) value += PieceValue[move.promotion() + KNIGHT] - PawnValue;
+	return value;
+}
+
+bool Position::see(Move move, int threshold) {
+	Square src = move.src();
+	Square dst = move.dst();
+	PieceType atkr = PieceType(mailbox[src] & 7);
+	PieceType victim = PieceType(mailbox[dst] & 7);
+
+	if (move.type() == CASTLING) return threshold <= 0; // the value for castling is 0
+
+	int score = gain_(*this, move) - threshold;
+	if (score < 0) return false; // If immediately evaluating the capture is not good enough
+	PieceType next = move.type() == PROMOTION ? PieceType(move.promotion() + KNIGHT) : atkr;
+	score -= PieceValue[next];
+	if (score >= 0) return true; // If even losing our piece would still be good
+
+	int side = mailbox[src] >> 3; // 0 for white, 1 for black
+
+	Bitboard occ = piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)];
+	occ ^= square_bits(src);
+	if (move.type() == EN_PASSANT) {
+		// remove the pawn that was captured (next to the capturing pawn)
+		occ ^= square_bits(Square(side == WHITE ? dst - 8 : dst + 8));
+	}
+	side ^= 1;
+
+	PieceType next_attacker = atkr;
+
+	while (Bitboard attackers = lva_(dst, side, next_attacker, occ)) {
+		occ ^= attackers & -attackers; // remove attacker from the board (x & -x gives lsb)
+
+		score = -score - 1 - PieceValue[next_attacker]; // negate, add the gain from the capture, and subtract 1 to prefer faster material gain
+		side ^= 1;
+
+		if (score >= 0) {
+			if (next_attacker == KING && lva_(dst, side, next_attacker, occ) != 0) {
+				// we recapture with king, but then the opponent will take our king (bad)
+				side ^= 1; // since the king is the last generated, we assume we have no other resources so the opponent wins the SEE
+			}
+			break; // positive gain
+		}
+	}
+
+	return side != this->side; // if it's the opponent's turn, we ended on our capture (good). otherwise they won the SEE
+}
+
+bool Position::is_pseudolegal(Move move) const {
+	// Must be our piece to move
+	if ((mailbox[move.src()] >> 3) != side)
+		return false;
+
+	// Cannot take our own piece
+	if (move.type() != CASTLING && piece_boards[OCC(side)] & square_bits(move.dst()))
+		return false;
+
+	if ((move.type() == PROMOTION || move.type() == EN_PASSANT) && (mailbox[move.src()] & 7) != PAWN)
+		return false;
+
+	if (move.type() == CASTLING && (mailbox[move.src()] & 7) != KING)
+		return false;
+
+	switch (mailbox[move.src()] & 7) {
+	case QUEEN:
+		if ((bishop_blockers[move.src()][move.dst()] & (piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)])) == 0)
+			return true;
+		[[fallthrough]];
+	case ROOK:
+		return (rook_blockers[move.src()][move.dst()] & (piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)])) == 0;
+	case BISHOP:
+		return (bishop_blockers[move.src()][move.dst()] & (piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)])) == 0;
+	case KNIGHT:
+		return knight_movetable[move.src()] & square_bits(move.dst());
+	case PAWN:
+		if (move.type() == EN_PASSANT) [[unlikely]] {
+			return move.dst() == ep_square;
+		} else if (move.type() == PROMOTION) [[unlikely]] {
+			if (side == WHITE && move.dst() <= move.src())
+				return false;
+			if (side == BLACK && move.dst() >= move.src())
+				return false;
+
+			if ((move.src() & 7) != (move.dst() & 7))
+				return square_bits(move.dst()) & piece_boards[OPPOCC(side)];
+			else
+				return mailbox[move.dst()] == NO_PIECE;
+		} else [[likely]] {
+			if (side == WHITE) {
+				if (move.dst() - move.src() == 8)
+					return mailbox[move.dst()] == NO_PIECE;
+				if ((move.src() & 7) != FILE_A && move.dst() - move.src() == 7)
+					return square_bits(move.dst()) & piece_boards[OCC(BLACK)];
+				if ((move.src() & 7) != FILE_H && move.dst() - move.src() == 9)
+					return square_bits(move.dst()) & piece_boards[OCC(BLACK)];
+				if (move.dst() - move.src() == 16)
+					return move.src() <= SQ_H2 && mailbox[move.dst()] == NO_PIECE && mailbox[move.src() + 8] == NO_PIECE;
+			} else {
+				if (move.src() - move.dst() == 8)
+					return mailbox[move.dst()] == NO_PIECE;
+				if ((move.src() & 7) != FILE_A && move.src() - move.dst() == 9)
+					return square_bits(move.dst()) & piece_boards[OCC(WHITE)];
+				if ((move.src() & 7) != FILE_H && move.src() - move.dst() == 7)
+					return square_bits(move.dst()) & piece_boards[OCC(WHITE)];
+				if (move.src() - move.dst() == 16)
+					return move.src() >= SQ_A7 && mailbox[move.dst()] == NO_PIECE && mailbox[move.src() - 8] == NO_PIECE;
+			}
+			return false;
+		}
+		break;
+	case KING:
+		if (move.type() == CASTLING) [[unlikely]] {
+			int rights_idx = ((move.dst() & 0b001100) ^ 0b000100) >> 2;
+			if ((castling & (1 << rights_idx)) == 0)
+				return false;
+
+			return (mailbox[move.dst()] & 7) == ROOK && (castle_blockers[move.src()][move.dst()] & (piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)])) == 0;
+		} else [[likely]] {
+			return king_movetable[move.src()] & square_bits(move.dst());
+		}
+		break;
+	}
+	return false;
+}
+
+bool Position::is_legal(Move move) const {
+	Square king_sq = (Square)arch::tzcnt(piece_boards[KING] & piece_boards[OCC(side)]);
+
+	if (move.type() == EN_PASSANT) {
+		Square capture_sq = Square((move.src() & 0b111000) | (move.dst() & 0b000111));
+		// In check from something other than the captured pawn
+		if (checkers[side] & ~square_bits(capture_sq))
+			return false;
+
+		// Simulate the move and see if we discovered check
+		Bitboard occ = piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)];
+		occ ^= square_bits(move.src()) | square_bits(capture_sq) | square_bits(move.dst());
+		Bitboard rooks = (piece_boards[ROOK] | piece_boards[QUEEN]) & piece_boards[OPPOCC(side)];
+		Bitboard bishops = (piece_boards[BISHOP] | piece_boards[QUEEN]) & piece_boards[OPPOCC(side)];
+		return (rook_attacks(king_sq, occ) & rooks) == 0 && (bishop_attacks(king_sq, occ) & bishops) == 0;
+	}
+
+	if (move.type() == CASTLING) {
+		Bitboard occs = piece_boards[OCC(WHITE)] | piece_boards[OCC(BLACK)];
+		if (move.dst() == rook_pos[0] || move.dst() == rook_pos[2]) {
+			// Kingside
+			if (side_control[!side] &
+				(rook_blockers[move.src()][SQ_G1 | (move.src() & 0b111000)] | square_bits(Square(SQ_G1 | (move.src() & 0b111000))) | square_bits(move.src())))
+				return false;
+			if (pinned[side] & square_bits(move.dst()))
+				return false;
+		} else {
+			// Queenside
+			if (side_control[!side] &
+				(rook_blockers[move.src()][SQ_C1 | (move.src() & 0b111000)] | square_bits(Square(SQ_C1 | (move.src() & 0b111000))) | square_bits(move.src())))
+				return false;
+			if (pinned[side] & square_bits(move.dst()))
+				return false;
+		}
+		return true;
+	}
+
+	// Moving king, cannot move into check
+	if ((mailbox[move.src()] & 7) == KING)
+		return (side_control[side ^ 1] & square_bits(move.dst())) == 0;
+
+	// Double check, only king moves allowed
+	if (arch::popcnt(checkers[side]) > 1)
+		return false;
+
+	if (checkers[side]) {
+		// Block
+		Square checker_sq = (Square)arch::tzcnt(checkers[side]);
+		Bitboard between = rook_blockers_pure[checker_sq][king_sq] | bishop_blockers_pure[checker_sq][king_sq];
+		if (between & square_bits(move.dst()))
+			goto next;
+
+		// Capture
+		if (move.dst() == checker_sq)
+			goto next;
+
+		return false;
+	}
+
+next:
+	// Pinned piece
+	if (pinned[side] & square_bits(move.src())) {
+		// Find the pinner
+		Bitboard p = pinners[side];
+		while (p) {
+			// Get ray between pinned piece and king
+			Square pinner_sq = (Square)arch::tzcnt(p);
+			Bitboard ray = arch::blsi(p) | rook_blockers_pure[pinner_sq][king_sq] | bishop_blockers_pure[pinner_sq][king_sq];
+			if (square_bits(move.src()) & ray)
+				return square_bits(move.dst()) & ray;
+			p ^= ray;
+		}
+	}
+
+	// Nothing is wrong, return true
+	return true;
 }

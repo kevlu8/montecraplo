@@ -1,6 +1,5 @@
 #pragma once
 
-#include "includes.hpp"
 #include "move.hpp"
 
 // Selects the occupancy array by xoring 6 with side (white: false = 0 ^ 6 = 6, black: true = 1 ^ 6 = 7)
@@ -58,63 +57,80 @@ struct HistoryEntry {
 	}
 };
 
-struct Board {
-	Bitboard piece_boards[8] = {0};
+struct Position {
+	Bitboard piece_boards[8] = {};
+	Bitboard side_control[2] = {};
+	Bitboard pinned[2];
+	Bitboard pinners[2];
+	Bitboard checkers[2];
 	bool side = WHITE;
 	uint8_t halfmove = 0;
-	uint8_t castling = 0xf; // 1111
+	uint8_t castling = 0xf;
 	Square ep_square = SQ_NONE;
+	Square rook_pos[4];
 	uint64_t zobrist = 0;
-	pzstd::largevector<uint64_t> hash_hist;
+	uint64_t piece_hashes[15];
 
 	// Mailbox representation of the board for faster queries of certain data
-	Piece mailbox[8 * 8] = {WHITE_ROOK, WHITE_KNIGHT, WHITE_BISHOP, WHITE_QUEEN, WHITE_KING, WHITE_BISHOP, WHITE_KNIGHT, WHITE_ROOK,
-							WHITE_PAWN, WHITE_PAWN,	  WHITE_PAWN,	WHITE_PAWN,	 WHITE_PAWN, WHITE_PAWN,   WHITE_PAWN,	 WHITE_PAWN,
-							NO_PIECE,	NO_PIECE,	  NO_PIECE,		NO_PIECE,	 NO_PIECE,	 NO_PIECE,	   NO_PIECE,	 NO_PIECE,
-							NO_PIECE,	NO_PIECE,	  NO_PIECE,		NO_PIECE,	 NO_PIECE,	 NO_PIECE,	   NO_PIECE,	 NO_PIECE,
-							NO_PIECE,	NO_PIECE,	  NO_PIECE,		NO_PIECE,	 NO_PIECE,	 NO_PIECE,	   NO_PIECE,	 NO_PIECE,
-							NO_PIECE,	NO_PIECE,	  NO_PIECE,		NO_PIECE,	 NO_PIECE,	 NO_PIECE,	   NO_PIECE,	 NO_PIECE,
-							BLACK_PAWN, BLACK_PAWN,	  BLACK_PAWN,	BLACK_PAWN,	 BLACK_PAWN, BLACK_PAWN,   BLACK_PAWN,	 BLACK_PAWN,
-							BLACK_ROOK, BLACK_KNIGHT, BLACK_BISHOP, BLACK_QUEEN, BLACK_KING, BLACK_BISHOP, BLACK_KNIGHT, BLACK_ROOK};
+	Piece mailbox[64];
 
-	// Moves with extra information (taken piece etc..)
-	// better documentation will be included later
-	std::stack<HistoryEntry> move_hist;
-	std::stack<uint8_t> halfmove_hist;
+	int fullmove = 0;
 
-	Board() {
-		// Load starting position
-		piece_boards[0] = Rank2Bits | Rank7Bits;
-		piece_boards[1] = square_bits(SQ_B1) | square_bits(SQ_G1) | square_bits(SQ_B8) | square_bits(SQ_G8);
-		piece_boards[2] = square_bits(SQ_C1) | square_bits(SQ_F1) | square_bits(SQ_C8) | square_bits(SQ_F8);
-		piece_boards[3] = square_bits(SQ_A1) | square_bits(SQ_H1) | square_bits(SQ_A8) | square_bits(SQ_H8);
-		piece_boards[4] = square_bits(SQ_D1) | square_bits(SQ_D8);
-		piece_boards[5] = square_bits(SQ_E1) | square_bits(SQ_E8);
-		piece_boards[6] = Rank1Bits | Rank2Bits;
-		piece_boards[7] = Rank7Bits | Rank8Bits;
-		recompute_hash();
+	Position() {
+		reset_pos();
 	}
 
-	Board(std::string fen) {
+	Position(std::string fen) {
 		load_fen(fen);
-		recompute_hash();
-	};
+	}
 
 	void load_fen(std::string);
 	std::string get_fen() const;
 	void print_board() const;
 	bool sanity_check(char *);
 
-	void make_move(Move);
-	void unmake_move();
+	void reset_pos();
+	void reset_startpos() { reset_pos(); }
+	void reset(std::string fen) { reset_pos(); load_fen(fen); }
 
-	void legal_moves(pzstd::vector<Move> &) const;
-	std::pair<int, int> control(int) const;
-	Value see(Square);
-	Value see_capture(Move);
+	void make_move(Move);
+	void update_control();
+
+	void pseudolegal_moves(pzstd::vector<Move> &) const;
+	void captures(pzstd::vector<Move> &) const;
+	bool control(int, bool) const;
+	bool see(Move, int);
+	Bitboard lva_(Square, int side, PieceType &p, Bitboard occ) const;
+	bool is_pseudolegal(Move) const;
+	bool is_legal(Move) const;
+	constexpr bool is_capture(Move m) const {
+		return m != NullMove && (piece_boards[OPPOCC(side)] & square_bits(m.dst()));
+	}
 
 	void recompute_hash();
 
-	bool threefold();
-	uint8_t ended(pzstd::vector<Move> &, pzstd::vector<Move> &);
+	bool insufficient_material() const;
+
+	uint64_t pawn_hash() const;
+	uint64_t nonpawn_hash(bool color) const;
+	uint64_t major_hash() const;
+	uint64_t minor_hash() const;
+	uint64_t zobrist_without_ep() const;
+};
+
+struct RepetitionHandler {
+	pzstd::vector<uint64_t, 1024> hash_hist;
+
+	RepetitionHandler() {
+		hash_hist.clear();
+	}
+
+	void clear() {
+		hash_hist.clear();
+	}
+
+	bool threefold(int ply, uint64_t hash);
+
+	void push_hash(uint64_t hash) { hash_hist.push_back(hash); }
+	void pop_hash() { hash_hist.pop_back(); }
 };

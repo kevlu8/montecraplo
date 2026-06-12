@@ -2,36 +2,47 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
-#include <immintrin.h>
 #include <iomanip>
 #include <iostream>
-#include <random>
+#include <optional>
 #include <stack>
 #include <string>
+#include <thread>
+#include <unordered_set>
 #include <utility>
 
+#include "arch/arch.hpp"
 #include "pzstl/vector.hpp"
 
-#define VERSION "v20250618T17"
+#ifndef VERSION
+#define VERSION "v7.0"
+#endif
 
-#define VALUE_HEAD "eval.bin"
+#define NNUE_PAWN_VALUE 2.25
 
 typedef uint64_t Bitboard;
 
 constexpr bool WHITE = false;
 constexpr bool BLACK = true;
 
-constexpr int MAX_PLY = 100;
+constexpr int MAX_PLY = 200;
+constexpr int MAX_THREADS = 512;
 
 typedef int16_t Value;
 constexpr Value VALUE_ZERO = 0;
 constexpr Value VALUE_INFINITE = 32000;
 constexpr Value VALUE_MATE = 30002; // Add 2 as a consequence of our evaluation function only returning MATE when king is taken
 constexpr Value VALUE_MATE_MAX_PLY = VALUE_MATE - MAX_PLY;
+constexpr Value VALUE_NONE = -31000;
+
+constexpr Value VALUE_TB_WIN = 28000;
+constexpr Value VALUE_TB_WIN_MAX_PLY = VALUE_TB_WIN - MAX_PLY;
+constexpr Value VALUE_WIN = VALUE_TB_WIN_MAX_PLY; // They're the same thing
 
 constexpr Value PawnValue = 100;
 constexpr Value KnightValue = 350;
@@ -40,7 +51,16 @@ constexpr Value RookValue = 525;
 constexpr Value QueenValue = 1000;
 constexpr Value VALUE_MAX = QueenValue * 9 + (KnightValue + BishopValue + RookValue) * 2;
 
+constexpr Value MAX_HISTORY = 16384;
+constexpr Value MAX_CORRHIST = 1024;
+
+#ifndef NNUE_PATH
+#define NNUE_PATH "nnue.bin"
+#endif
+
 #define CLOCKS_PER_MS (CLOCKS_PER_SEC / 1000)
+
+// clang-format off
 
 enum PieceType : uint8_t { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, NO_PIECETYPE };
 
@@ -60,15 +80,14 @@ enum Piece : uint8_t {
 	NO_PIECE
 };
 
-constexpr Value PieceValue[] = {PawnValue, KnightValue, BishopValue, RookValue, QueenValue, VALUE_INFINITE - VALUE_MAX};
+constexpr Value PieceValue[] = {PawnValue, KnightValue, BishopValue, RookValue, QueenValue, VALUE_INFINITE - VALUE_MAX, 0};
+constexpr Value MVV[] = { 800, 2400, 2400, 4800, 7200, 16000 };
 
 enum CastlingRights : uint8_t { NO_CASTLE, WHITE_OO, WHITE_OOO = WHITE_OO << 1, BLACK_OO = WHITE_OO << 2, BLACK_OOO = WHITE_OO << 3 };
 
-// clang-format off
 constexpr PieceType letter_piece[] = {BISHOP, NO_PIECETYPE, NO_PIECETYPE, NO_PIECETYPE, NO_PIECETYPE, NO_PIECETYPE, NO_PIECETYPE, NO_PIECETYPE, NO_PIECETYPE, KING, NO_PIECETYPE, NO_PIECETYPE, KNIGHT, NO_PIECETYPE, PAWN, QUEEN, ROOK};
 constexpr char piecetype_letter[] = {'p', 'n', 'b', 'r', 'q', 'k', '?'};
 constexpr char piece_letter[] = {'P','N','B','R','Q','K','?','?','p','n','b','r','q','k','?'};
-// clang-format on
 
 enum File : uint16_t {
 	FILE_A,
@@ -81,6 +100,10 @@ enum File : uint16_t {
 	FILE_H,
 };
 
+inline constexpr File operator++(File &file, int) {
+	return file = File(file + 1);
+}
+
 enum Rank : uint16_t {
 	RANK_1,
 	RANK_2,
@@ -92,8 +115,11 @@ enum Rank : uint16_t {
 	RANK_8,
 };
 
-// clang-format off
-enum Square : uint16_t {
+inline constexpr Rank operator++(Rank &rank, int) {
+	return rank = Rank(rank + 1);
+}
+
+enum Square : uint8_t {
 	SQ_A1, SQ_B1, SQ_C1, SQ_D1, SQ_E1, SQ_F1, SQ_G1, SQ_H1,
 	SQ_A2, SQ_B2, SQ_C2, SQ_D2, SQ_E2, SQ_F2, SQ_G2, SQ_H2,
 	SQ_A3, SQ_B3, SQ_C3, SQ_D3, SQ_E3, SQ_F3, SQ_G3, SQ_H3,
@@ -104,7 +130,19 @@ enum Square : uint16_t {
 	SQ_A8, SQ_B8, SQ_C8, SQ_D8, SQ_E8, SQ_F8, SQ_G8, SQ_H8,
 	SQ_NONE
 };
-// clang-format on
+
+inline constexpr Square make_square(File file, Rank rank) {
+	return Square(file + rank * 8);
+}
+
+inline constexpr Square operator++(Square &square, int) {
+	return square = Square(square + 1);
+}
+
+inline std::string to_string(Square square) {
+	if (square >= SQ_NONE) return "None";
+	return std::string(1, 'a' + (square % 8)) + std::to_string(1 + (square / 8));
+}
 
 enum MoveType {
 	NORMAL,
