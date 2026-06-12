@@ -167,6 +167,17 @@ MCTSNode *bestchild(MCTSNode *root) {
 	return best_child;
 }
 
+void print_pv(MCTSNode *root) {
+	MCTSNode *cur = root;
+	while (cur) {
+		MCTSNode *best_child = bestchild(cur);
+		if (best_child) {
+			std::cout << best_child->move.to_string() << " ";
+		}
+		cur = best_child;
+	}
+}
+
 void search(Position &p, RepetitionHandler &rp, int time) {
 	std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 
@@ -182,7 +193,9 @@ void search(Position &p, RepetitionHandler &rp, int time) {
 				// Print info
 				MCTSNode *best_child = bestchild(root);
 				std::cout << "info depth 1 score cp " << int(best_child->val * 100 / best_child->visits) << " nodes " << its << " winrate " << best_child->val / best_child->visits << " mctsnodes " << total_nodes
-						<< " time " << elapsed << " nps " << its * 1000 / elapsed << " pv " << best_child->move.to_string() << std::endl;
+						<< " time " << elapsed << " nps " << its * 1000 / elapsed << " pv ";
+				print_pv(root);
+				std::cout << std::endl;
 			}
 
 			// Check for time limit
@@ -210,7 +223,9 @@ void search(Position &p, RepetitionHandler &rp, int time) {
 	MCTSNode *best_child = bestchild(root);
 	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
 	std::cout << "info depth 1 score cp " << int(best_child->val * 100 / best_child->visits) << " nodes " << its << " winrate " << best_child->val / best_child->visits << " mctsnodes " << total_nodes
-			<< " time " << elapsed << " nps " << its * 1000 / elapsed << " pv " << best_child->move.to_string() << std::endl;
+			<< " time " << elapsed << " nps " << its * 1000 / elapsed << " pv ";
+	print_pv(root);
+	std::cout << std::endl;
 
 	std::cout << "info string visits:\n";
 	uint64_t tot = root->visits;
