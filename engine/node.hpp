@@ -5,16 +5,16 @@
 static int total_nodes = 0;
 
 struct MCTSNode {
-    double val;
-    int visits;
-    Move move;
-    MCTSNode *parent;
-    MCTSNode *first_child, *next_sibling;
-    bool leaf;
+	double val;
+	int visits;
+	Move move;
+	MCTSNode *parent;
+	MCTSNode *first_child, *next_sibling;
+	bool terminal;
 
-    MCTSNode() : val(0), visits(0), move(NullMove), parent(nullptr), first_child(nullptr), next_sibling(nullptr), leaf(true) { total_nodes++; }
+	MCTSNode() : val(0), visits(0), move(NullMove), parent(nullptr), first_child(nullptr), next_sibling(nullptr), terminal(false) { total_nodes++; }
 
-    inline double ucb1(double c_puct = 1.414) {
+	inline double ucb1(double c_puct = 1.414) {
         if (visits == 0) return INFINITY; // prioritize unexplored nodes
         // UCB1 formula: Q + C * sqrt(log(N) / n)
         // where Q is average value, C is exploration constant,
@@ -22,5 +22,5 @@ struct MCTSNode {
         double q_value = (double)val / visits;
         double u_value = c_puct * sqrt(log(parent->visits)) / (visits);
         return q_value + u_value;
-    }
+	}
 };
