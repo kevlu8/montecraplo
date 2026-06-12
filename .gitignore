@@ -36,3 +36,5 @@ montecraplo
 lichess-bot/
 
 .vscode/
+config.json
+mc*

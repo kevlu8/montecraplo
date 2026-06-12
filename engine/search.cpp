@@ -20,7 +20,7 @@ int to_cp_eval(int visits, int val) {
 // Phase 1: Selection
 // Iterate DFS-style through the tree, choosing the child with maximum UCB1
 // until we hit a leaf node (no children). We select and return this leaf node.
-MCTSNode *select(MCTSNode *u) {
+MCTSNode *select(MCTSNode *u, Position &pos) {
     if (u->leaf) return u;
     double best_ucb1 = -INFINITY;
     MCTSNode *best_child = nullptr;
@@ -34,27 +34,26 @@ MCTSNode *select(MCTSNode *u) {
     }
 
     if (!best_child) return u;
-    return select(best_child);
+    pos.make_move(best_child->move);
+    return select(best_child, pos);
 }
 
 // Phase 2: Expansion
 // Take the selected node and expand its children (i.e. do movegen).
 // Pick a random child and return it for rollout.
-MCTSNode *expand(MCTSNode *u) {
+MCTSNode *expand(MCTSNode *u, Position &pos) {
     if (!u->leaf) return u; // Already expanded
     u->leaf = false;
 
     pzstd::vector<Move> moves;
-    u->pos.pseudolegal_moves(moves);
+    pos.pseudolegal_moves(moves);
 
     for (auto &m : moves) {
-        if (!u->pos.is_legal(m)) continue;
+        if (!pos.is_legal(m)) continue;
 
         MCTSNode *c = new MCTSNode();
         c->parent = u;
         c->move = m;
-        c->pos = u->pos;
-        c->pos.make_move(m);
 
         u->children.push_back(c);
     }
@@ -64,9 +63,10 @@ MCTSNode *expand(MCTSNode *u) {
 
 // Phase 3: Simulation / Rollout
 // Take the selected child and simulate a random game. Return the result.
-int rollout(MCTSNode *u) {
-    Position pos = u->pos; // Need to copy
+int rollout(MCTSNode *u, Position &p) {
+    Position pos = p; // Must copy to avoid modifying the original
     int res = 0;
+    pzstd::vector<Move> moves, legal_moves;
     while (true) {
         // Check for game over (kinda expensive)
         // To do this easily, we can do a movegen and check is_legal() on
@@ -80,7 +80,7 @@ int rollout(MCTSNode *u) {
         // For now, rely on the other draw conditions
 
         // Now for mate detection
-        pzstd::vector<Move> moves, legal_moves;
+        moves.clear(); legal_moves.clear();
         pos.pseudolegal_moves(moves);
         bool legal_exists = false;
         for (const auto &m : moves) {
@@ -93,9 +93,9 @@ int rollout(MCTSNode *u) {
         if (!legal_exists) {
             if (pos.checkers[pos.side])
                 // imagine pos.side == white, this means white lost.
-                // if u is also white, then the result of this rollout is
+                // if p.side is also white, then the result of this rollout is
                 // a loss for u, so we set res = -1.
-                res = pos.side == u->pos.side ? -1 : 1;
+                res = pos.side == p.side ? -1 : 1;
             else
                 res = 0; // Stalemate
             break;
@@ -137,11 +137,10 @@ MCTSNode *bestchild(MCTSNode *root) {
     return best_child;
 }
 
-void search(Position &pos, int time) {
+void search(Position &p, int time) {
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 
     MCTSNode *root = new MCTSNode();
-    root->pos = pos;
 
     its = 0;
     while (true) {
@@ -163,9 +162,14 @@ void search(Position &pos, int time) {
             if (total_nodes * 3000 / 1024 / 1024 >= 256) break;
         }
 
-        auto *u = select(root); // Select a leaf node
-        auto *c = expand(u); // Expand the leaf node and get the child
-        int res = rollout(c); // Simulate a game and get the result
+        Position pos = p; // Must copy to avoid modifying the original
+
+        auto *u = select(root, pos); // Select a leaf node
+        auto *c = expand(u, pos); // Expand the leaf node and get the child
+
+        pos.make_move(c->move);
+
+        int res = rollout(c, pos); // Simulate a game and get the result
         backprop(c, res); // Propagate the result
     }
 

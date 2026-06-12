@@ -10,7 +10,6 @@ struct MCTSNode {
     Move move;
     MCTSNode *parent;
     pzstd::vector<MCTSNode *> children;
-    Position pos;
     bool leaf;
 
     MCTSNode() : val(0), visits(0), move(NullMove), parent(nullptr), leaf(true) { total_nodes++; }
