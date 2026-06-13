@@ -38,3 +38,4 @@ lichess-bot/
 .vscode/
 config.json
 mc*
+nn.bin
