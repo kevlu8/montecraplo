@@ -8,12 +8,16 @@
 #include "node.hpp"
 #include "random.hpp"
 #include "eval.hpp"
+#include "util.hpp"
+#include "nn/accumulator.hpp"
 
-MCTSNode *select(MCTSNode *u, Position &pos, RepetitionHandler &rp);
+extern Network nn;
+
+MCTSNode *select(MCTSNode *u, Position &pos, RepetitionHandler &rp, AccumulatorManager &am);
 void expand(MCTSNode *u, Position &pos, RepetitionHandler &rp);
-double rollout(MCTSNode *u, Position &pos, RepetitionHandler &rp);
+double rollout(MCTSNode *u, Position &pos, AccumulatorManager &am);
 void backprop(MCTSNode *u, double res);
 
-void search(Position &pos, RepetitionHandler &rp, int time=1e9);
+Move search(Position &pos, RepetitionHandler &rp, AccumulatorManager &am, int time=1e9, uint64_t visits=1e18, void *opt_visdistr=nullptr);
 
 extern uint64_t its;

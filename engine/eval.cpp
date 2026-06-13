@@ -1,14 +1,17 @@
 #include "eval.hpp"
 
-Value eval(const Position &pos) {
-	return 100 * arch::popcnt(pos.piece_boards[PAWN] & pos.piece_boards[OCC(pos.side)])
-		+ 300 * arch::popcnt(pos.piece_boards[KNIGHT] & pos.piece_boards[OCC(pos.side)])
-		+ 300 * arch::popcnt(pos.piece_boards[BISHOP] & pos.piece_boards[OCC(pos.side)])
-		+ 500 * arch::popcnt(pos.piece_boards[ROOK] & pos.piece_boards[OCC(pos.side)])
-		+ 900 * arch::popcnt(pos.piece_boards[QUEEN] & pos.piece_boards[OCC(pos.side)])
-		- 100 * arch::popcnt(pos.piece_boards[PAWN] & pos.piece_boards[OCC(!pos.side)])
-		- 300 * arch::popcnt(pos.piece_boards[KNIGHT] & pos.piece_boards[OCC(!pos.side)])
-		- 300 * arch::popcnt(pos.piece_boards[BISHOP] & pos.piece_boards[OCC(!pos.side)])
-		- 500 * arch::popcnt(pos.piece_boards[ROOK] & pos.piece_boards[OCC(!pos.side)])
-		- 900 * arch::popcnt(pos.piece_boards[QUEEN] & pos.piece_boards[OCC(!pos.side)]);
+extern Network nn;
+
+Value eval(Position &pos, AccumulatorManager &am) {
+	am.apply_lazy(pos);
+
+	Value score = 0;
+
+	if (pos.side == WHITE) {
+		score = nn_value(nn, am.current().w_acc, am.current().b_acc);
+	} else {
+		score = nn_value(nn, am.current().b_acc, am.current().w_acc);
+	}
+
+	return score;
 }

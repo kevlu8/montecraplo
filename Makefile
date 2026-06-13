@@ -1,12 +1,13 @@
 EXE ?= montecraplo
+EVALFILE ?= nn.bin
 
 CXX := g++
-CXXFLAGS := -std=c++20 -march=native
+CXXFLAGS := -std=c++20 -march=native -DNN_PATH=\"$(EVALFILE)\"
 RELEASEFLAGS = -O3
 DEBUGFLAGS = -g -fsanitize=address,undefined
 
-SRCS := $(wildcard engine/*.cpp engine/arch/*.cpp)
-HDRS := $(wildcard engine/*.hpp engine/pzstl/*.hpp engine/arch/*.hpp)
+SRCS := $(wildcard engine/*.cpp engine/arch/*.cpp engine/nn/*.cpp)
+HDRS := $(wildcard engine/*.hpp engine/pzstl/*.hpp engine/arch/*.hpp engine/nn/*.hpp)
 OBJS := $(SRCS:.cpp=.o)
 
 .PHONY: release debug clean

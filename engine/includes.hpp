@@ -20,7 +20,7 @@
 #include "pzstl/vector.hpp"
 
 #ifndef VERSION
-#define VERSION "v7.0"
+#define VERSION "v0.1"
 #endif
 
 #define NNUE_PAWN_VALUE 2.25
@@ -54,8 +54,8 @@ constexpr Value VALUE_MAX = QueenValue * 9 + (KnightValue + BishopValue + RookVa
 constexpr Value MAX_HISTORY = 16384;
 constexpr Value MAX_CORRHIST = 1024;
 
-#ifndef NNUE_PATH
-#define NNUE_PATH "nnue.bin"
+#ifndef NN_PATH
+#define NN_PATH "nn.bin"
 #endif
 
 #define CLOCKS_PER_MS (CLOCKS_PER_SEC / 1000)

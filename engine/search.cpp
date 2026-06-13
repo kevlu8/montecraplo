@@ -18,16 +18,36 @@ void clear_nodes(MCTSNode *u) {
 // Phase 1: Selection
 // Iterate DFS-style through the tree, choosing the child with maximum UCB1
 // until we hit a leaf node (no children). We select and return this leaf node.
-MCTSNode *select(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
+MCTSNode *select(MCTSNode *u, Position &pos, RepetitionHandler &rp, AccumulatorManager &am) {
 	if (!u->first_child) return u; // May return a terminal node
-	double best_ucb1 = -INFINITY;
+	double best_puct = -INFINITY;
 	MCTSNode *best_child = nullptr;
 
+	// Query policy head for move scores
+	std::array<float, PHEAD_SIZE> policy;
+	if (pos.side == WHITE) policy = nn_policy(nn, am.current().w_acc, am.current().b_acc);
+	else policy = nn_policy(nn, am.current().b_acc, am.current().w_acc);
+
+	// Mask out illegal moves
+	bool legal[PHEAD_SIZE] = {};
 	MCTSNode *cur = u->first_child;
 	while (cur) {
-		double ucb1 = cur->ucb1();
-		if (ucb1 > best_ucb1) {
-			best_ucb1 = ucb1;
+		Move m = cur->move;
+		legal[move_to_policy(m)] = true;
+		cur = cur->next_sibling;
+	}
+
+	double total = 0;
+	for (int i = 0; i < PHEAD_SIZE; i++) {
+		if (legal[i]) total += std::exp(policy[i]); // softmax total
+	}
+
+	cur = u->first_child;
+	while (cur) {
+		double prob = std::exp(policy[move_to_policy(cur->move)]) / total;
+		double puct = cur->puct(prob);
+		if (puct > best_puct) {
+			best_puct = puct;
 			best_child = cur;
 		}
 		cur = cur->next_sibling;
@@ -35,7 +55,8 @@ MCTSNode *select(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
 
 	pos.make_move(best_child->move);
 	rp.push_hash(pos.zobrist_without_ep());
-	return select(best_child, pos, rp);
+	am.make_move(pos, best_child->move);
+	return select(best_child, pos, rp, am);
 }
 
 // Phase 2: Expansion
@@ -79,56 +100,9 @@ void expand(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
 
 // Phase 3: Simulation / Rollout
 // Take the selected child and simulate a random game. Return the result.
-double rollout(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
-	int orig_side = pos.side;
-	int ply = 0;
-	double res = 0.0;
-	pzstd::vector<Move> moves, legal_moves;
-	while (true) {
-		// First, check for excessively long games. Once our rollout reaches,
-		// say, 8 plies, we stop the rollout and return a simple evaluation.
-		if (ply >= 8) {
-			res = std::clamp(eval(pos) / 1000.0, -1.0, 1.0) * (pos.side == orig_side ? 1 : -1);
-			break;
-		}
-
-		// Check for game over (kinda expensive)
-		// To do this easily, we can do a movegen and check is_legal() on
-		// each move. If no moves are legal, the game is over.
-		
-		// First, check the cheaper stuff
-		if (pos.halfmove >= 100 || pos.insufficient_material() || rp.threefold(ply, pos.zobrist_without_ep())) break;
-
-		// Now for mate detection
-		moves.clear(); legal_moves.clear();
-		pos.pseudolegal_moves(moves);
-		bool legal_exists = false;
-		for (const auto &m : moves) {
-			if (pos.is_legal(m)) {
-				legal_exists = true;
-				legal_moves.push_back(m);
-			}
-		}
-
-		if (!legal_exists) {
-			if (pos.checkers[pos.side])
-				// imagine pos.side == white, this means white lost.
-				// if orig_side is also white, then the result of this rollout is
-				// a loss for u, so we set res = -1.
-				res = pos.side == orig_side ? -1 : 1;
-			else
-				res = 0; // Stalemate
-			break;
-		}
-
-		// Pick a random move
-		Move m = legal_moves[rng.next() % legal_moves.size()];
-		pos.make_move(m);
-		rp.push_hash(pos.zobrist_without_ep());
-		ply++;
-	}
-
-	return res;
+// In modern MCTS, we do one deep NN inference instead of actually playing a game.
+double rollout(MCTSNode *u, Position &pos, AccumulatorManager &am) {
+	return eval(pos, am);
 }
 
 // Phase 4: Backpropagation
@@ -172,25 +146,25 @@ void print_pv(MCTSNode *root) {
 	}
 }
 
-void search(Position &p, RepetitionHandler &rp, int time) {
+Move search(Position &p, RepetitionHandler &rp, AccumulatorManager &am, int time, uint64_t visits, void *opt_visdistr) {
 	std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 
 	MCTSNode *root = new MCTSNode();
 
 	its = 0;
-	while (true) {
+	while (its < visits) {
 		its++;
 		if ((its & 127) == 0) {
 			auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() + 1;
 
-			if ((its & 1023) == 0) {
-				// Print info
-				MCTSNode *best_child = bestchild(root);
-				std::cout << "info depth 1 score cp " << int(best_child->val * 100 / best_child->visits) << " nodes " << its << " winrate " << best_child->val / best_child->visits << " mctsnodes " << total_nodes
-						<< " time " << elapsed << " nps " << its * 1000 / elapsed << " pv ";
-				print_pv(root);
-				std::cout << std::endl;
-			}
+			// if ((its & 1023) == 0) {
+			// 	// Print info
+			// 	MCTSNode *best_child = bestchild(root);
+			// 	std::cout << "info depth 1 score cp " << int(best_child->val * 100 / best_child->visits) << " nodes " << its << " winrate " << best_child->val / best_child->visits << " mctsnodes " << total_nodes
+			// 			<< " time " << elapsed << " nps " << its * 1000 / elapsed << " pv ";
+			// 	print_pv(root);
+			// 	std::cout << std::endl;
+			// }
 
 			// Check for time limit
 			if (elapsed >= time) break;
@@ -201,30 +175,42 @@ void search(Position &p, RepetitionHandler &rp, int time) {
 
 		Position pos = p; // Must copy to avoid modifying the original
 		RepetitionHandler rp_copy = rp;
+		AccumulatorManager am_copy = am;
 
-		auto *u = select(root, pos, rp_copy); // Select a leaf node
+		auto *u = select(root, pos, rp_copy, am_copy); // Select a leaf node
 		expand(u, pos, rp_copy); // Expand the leaf node and get the child
-		double res = rollout(u, pos, rp_copy); // Simulate a game and get the result
+		double res = rollout(u, pos, am_copy); // Simulate a game and get the result
 		backprop(u, res); // Propagate the result
 	}
 
 	MCTSNode *best_child = bestchild(root);
-	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() + 1;
-	std::cout << "info depth 1 score cp " << int(best_child->val * 100 / best_child->visits) << " nodes " << its << " winrate " << best_child->val / best_child->visits << " mctsnodes " << total_nodes
-			<< " time " << elapsed << " nps " << its * 1000 / elapsed << " pv ";
-	print_pv(root);
-	std::cout << std::endl;
+	// auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() + 1;
+	// std::cout << "info depth 1 score cp " << int(best_child->val * 100 / best_child->visits) << " nodes " << its << " winrate " << best_child->val / best_child->visits << " mctsnodes " << total_nodes
+	// 		<< " time " << elapsed << " nps " << its * 1000 / elapsed << " pv ";
+	// print_pv(root);
+	// std::cout << std::endl;
 
-	std::cout << "info string visits:\n";
+	// std::cout << "info string visits:\n";
 	uint64_t tot = root->visits;
-	MCTSNode *cur = root->first_child;
-	while (cur) {
-		std::cout << "info string " << cur->move.to_string() << ": " << cur->visits * 100 / tot << "% = " << cur->visits
-				<< " winrate = " << cur->val / cur->visits << "\n";
-		cur = cur->next_sibling;
+	// MCTSNode *cur = root->first_child;
+	// while (cur) {
+	// 	std::cout << "info string " << cur->move.to_string() << ": " << cur->visits * 100 / tot << "% = " << cur->visits << "\n";
+	// 	cur = cur->next_sibling;
+	// }
+	// std::cout << "bestmove " << best_child->move.to_string() << std::endl;
+
+	if (opt_visdistr) {
+		MCTSNode *cur = root->first_child;
+		while (cur) {
+			std::array<uint64_t, PHEAD_SIZE> *visits = (std::array<uint64_t, PHEAD_SIZE>*)opt_visdistr;
+			(*visits)[move_to_policy(cur->move)] = cur->visits / (double)tot;
+			cur = cur->next_sibling;
+		}
 	}
-	std::cout << "bestmove " << best_child->move.to_string() << std::endl;
+
+	Move move = best_child->move;
 
 	clear_nodes(root);
 	total_nodes = 0;
+	return move;
 }
