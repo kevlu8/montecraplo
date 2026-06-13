@@ -55,7 +55,7 @@ MCTSNode *expand(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
 	pzstd::vector<Move> moves;
 	pos.pseudolegal_moves(moves);
 
-	pzstd::vector<MCTSNode *> children;
+	MCTSNode *prev = nullptr;
 
 	for (auto &m : moves) {
 		if (!pos.is_legal(m)) continue;
@@ -68,19 +68,17 @@ MCTSNode *expand(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
 		if (!u->first_child) {
 			u->first_child = c;
 		} else {
-			MCTSNode *current = children[children.size() - 1];
-			current->next_sibling = c;
+			prev->next_sibling = c;
 		}
-		children.push_back(c);
+		prev = c;
 	}
 
-	if (children.empty()) {
+	if (!u->first_child) {
 		// No children means end of game (checkmate or stalemate)
 		u->terminal = true;
-		return u;
 	}
 
-	return children[rng.next() % children.size()];
+	return u;
 }
 
 // Phase 3: Simulation / Rollout
@@ -210,12 +208,6 @@ void search(Position &p, RepetitionHandler &rp, int time) {
 
 		auto *u = select(root, pos, rp_copy); // Select a leaf node
 		auto *c = expand(u, pos, rp_copy); // Expand the leaf node and get the child
-
-		if (!u->terminal) {
-			pos.make_move(c->move);
-			rp_copy.push_hash(pos.zobrist_without_ep());
-		}
-
 		double res = rollout(c, pos, rp_copy); // Simulate a game and get the result
 		backprop(c, res); // Propagate the result
 	}
