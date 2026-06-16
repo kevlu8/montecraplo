@@ -10,7 +10,7 @@
 #include "eval.hpp"
 
 MCTSNode *select(MCTSNode *u, Position &pos, RepetitionHandler &rp);
-MCTSNode *expand(MCTSNode *u, Position &pos, RepetitionHandler &rp);
+void expand(MCTSNode *u, Position &pos, RepetitionHandler &rp);
 double rollout(MCTSNode *u, Position &pos, RepetitionHandler &rp);
 void backprop(MCTSNode *u, double res);
 

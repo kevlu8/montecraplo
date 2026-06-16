@@ -33,7 +33,6 @@ MCTSNode *select(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
 		cur = cur->next_sibling;
 	}
 
-	if (!best_child) return u;
 	pos.make_move(best_child->move);
 	rp.push_hash(pos.zobrist_without_ep());
 	return select(best_child, pos, rp);
@@ -41,15 +40,14 @@ MCTSNode *select(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
 
 // Phase 2: Expansion
 // Take the selected node and expand its children (i.e. do movegen).
-// Pick a random child and return it for rollout.
-MCTSNode *expand(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
-	if (u->first_child) return u; // Already expanded
-	if (u->terminal) return u; // Already terminal
+void expand(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
+	if (u->first_child) return; // Already expanded
+	if (u->terminal) return; // Already terminal
 
 	// Check for game-over states
 	if (pos.halfmove >= 100 || pos.insufficient_material() || rp.threefold(0, pos.zobrist_without_ep())) {
 		u->terminal = true;
-		return u;
+		return;
 	}
 
 	pzstd::vector<Move> moves;
@@ -77,8 +75,6 @@ MCTSNode *expand(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
 		// No children means end of game (checkmate or stalemate)
 		u->terminal = true;
 	}
-
-	return u;
 }
 
 // Phase 3: Simulation / Rollout
@@ -207,9 +203,9 @@ void search(Position &p, RepetitionHandler &rp, int time) {
 		RepetitionHandler rp_copy = rp;
 
 		auto *u = select(root, pos, rp_copy); // Select a leaf node
-		auto *c = expand(u, pos, rp_copy); // Expand the leaf node and get the child
-		double res = rollout(c, pos, rp_copy); // Simulate a game and get the result
-		backprop(c, res); // Propagate the result
+		expand(u, pos, rp_copy); // Expand the leaf node and get the child
+		double res = rollout(u, pos, rp_copy); // Simulate a game and get the result
+		backprop(u, res); // Propagate the result
 	}
 
 	MCTSNode *best_child = bestchild(root);
@@ -223,7 +219,8 @@ void search(Position &p, RepetitionHandler &rp, int time) {
 	uint64_t tot = root->visits;
 	MCTSNode *cur = root->first_child;
 	while (cur) {
-		std::cout << "info string " << cur->move.to_string() << ": " << cur->visits * 100 / tot << "% = " << cur->visits << "\n";
+		std::cout << "info string " << cur->move.to_string() << ": " << cur->visits * 100 / tot << "% = " << cur->visits
+				<< " winrate = " << cur->val / cur->visits << "\n";
 		cur = cur->next_sibling;
 	}
 	std::cout << "bestmove " << best_child->move.to_string() << std::endl;
