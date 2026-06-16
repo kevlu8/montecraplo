@@ -90,8 +90,8 @@ double rollout(MCTSNode *u, Position &pos, RepetitionHandler &rp) {
 	pzstd::vector<Move> moves, legal_moves;
 	while (true) {
 		// First, check for excessively long games. Once our rollout reaches,
-		// say, 40 plies, we stop the rollout and return a simple evaluation.
-		if (ply >= 40) {
+		// say, 16 plies, we stop the rollout and return a simple evaluation.
+		if (ply >= 16) {
 			res = std::clamp(eval(pos) / 1000.0, -1.0, 1.0) * (pos.side == orig_side ? 1 : -1);
 			break;
 		}
