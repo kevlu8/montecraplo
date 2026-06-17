@@ -227,4 +227,6 @@ void search(Position &p, RepetitionHandler &rp, int time) {
 
 	clear_nodes(root);
 	total_nodes = 0;
+
+	delete root;
 }
